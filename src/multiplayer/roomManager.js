@@ -205,6 +205,44 @@ export async function leaveRoom(uid, roomId) {
     logger.info("[Room] Left:", roomId);
 }
 
+
+/**
+ * Host starts match — status waiting → playing + init game shell.
+ * Full authoritative deal = Phase 4 Cloud Functions; ini versi client-host bootstrap.
+ */
+export async function startMatch(roomId, hostUid) {
+    const roomRef = ref(database, `rooms/${roomId}`);
+    const snap = await get(roomRef);
+    if (!snap.exists()) throw new Error("Room tidak ada.");
+
+    const room = snap.val();
+    if (room.meta?.hostId !== hostUid) {
+        throw new Error("Hanya host yang bisa start.");
+    }
+    if (room.meta?.status !== "waiting") {
+        throw new Error("Room tidak dalam status waiting.");
+    }
+
+    const players = room.players || {};
+    const ids = Object.keys(players);
+    if (ids.length < 2) {
+        throw new Error("Minimal 2 pemain untuk start.");
+    }
+
+    const notReady = ids.filter((id) => !players[id]?.ready);
+    if (notReady.length > 0) {
+        throw new Error("Semua pemain harus Ready dulu.");
+    }
+
+    await update(ref(database, `rooms/${roomId}/meta`), {
+        status: "playing",
+        startedAt: Date.now()
+    });
+
+    logger.info("[Room] Match started:", roomId, "players:", ids.length);
+    return { roomId, playerIds: ids };
+}
+
 export async function setReady(roomId, uid, ready) {
     await update(ref(database, `rooms/${roomId}/players/${uid}`), {
         ready: !!ready

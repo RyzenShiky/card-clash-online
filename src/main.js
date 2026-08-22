@@ -20,7 +20,8 @@ import {
     joinRoomByCode,
     leaveRoom,
     setReady,
-    subscribeRoom
+    subscribeRoom,
+    startMatch
 } from "./multiplayer/roomManager.js";
 import { showAuthScreen, hideAuthScreen } from "./ui/authUI.js";
 import { renderMenu, renderOnlineMenu } from "./ui/menuUI.js";
@@ -231,6 +232,12 @@ function enterLobby(roomId, roomCode) {
             return;
         }
 
+        // Match started → masuk game screen multiplayer (shared lobby game)
+        if (room.meta?.status === "playing") {
+            enterMultiplayerMatch(roomId, room);
+            return;
+        }
+
         const isHost = room.meta?.hostId === currentUser.uid;
         renderLobby(
             screens.lobby(),
@@ -246,10 +253,14 @@ function enterLobby(roomId, roomCode) {
                     const me = room.players?.[currentUser.uid];
                     await setReady(roomId, currentUser.uid, !me?.ready);
                 },
-                onStart: () => {
-                    showNotification(
-                        "Start match multiplayer: Phase 4 (server authoritative)"
-                    );
+                onStart: async () => {
+                    try {
+                        showNotification("Memulai pertandingan...");
+                        await startMatch(roomId, currentUser.uid);
+                    } catch (e) {
+                        showNotification(e.message || "Gagal start");
+                        logger.error(e);
+                    }
                 },
                 onNotify: showNotification
             }
@@ -272,6 +283,69 @@ async function leaveCurrentRoom() {
     currentRoomId = null;
     currentRoomCode = null;
     showOnlineMenu();
+}
+
+
+function enterMultiplayerMatch(roomId, room) {
+    const playerIds = Object.keys(room.players || {});
+    showScreen("game");
+
+    // Bootstrap lokal: setiap client punya GameManager sendiri (demo).
+    // Production: deck + hands harus server-authoritative (Cloud Functions).
+    if (!soloGame || soloGame._roomId !== roomId) {
+        soloGame = new GameManager({
+            playerIds,
+            isSolo: false
+        });
+        soloGame._roomId = roomId;
+        soloGame.start();
+        showNotification("Match dimulai! (demo sync lokal — Phase 4 full server menyusul)");
+    }
+
+    const publicState = soloGame.getPublicView();
+    const hand = soloGame.getPrivateHand(currentUser.uid);
+
+    renderGame(
+        screens.game(),
+        { publicState, hand, currentUid: currentUser.uid },
+        {
+            onPlayCard: (cardId) => {
+                try {
+                    if (soloGame.turn.currentPlayerId !== currentUser.uid) {
+                        showNotification("Bukan giliranmu");
+                        return;
+                    }
+                    const card = hand.find((c) => c.id === cardId);
+                    let color = null;
+                    if (card && (card.value === "wild" || card.value === "wild_draw4")) {
+                        color = ["red", "blue", "green", "yellow"][Math.floor(Math.random() * 4)];
+                    }
+                    const result = soloGame.playCard(currentUser.uid, cardId, color);
+                    if (result.type === "win") showNotification("Kamu menang!");
+                    enterMultiplayerMatch(roomId, room);
+                } catch (e) {
+                    showNotification(e.message);
+                }
+            },
+            onDraw: () => {
+                try {
+                    if (soloGame.turn.currentPlayerId !== currentUser.uid) {
+                        showNotification("Bukan giliranmu");
+                        return;
+                    }
+                    soloGame.drawCard(currentUser.uid);
+                    enterMultiplayerMatch(roomId, room);
+                } catch (e) {
+                    showNotification(e.message);
+                }
+            },
+            onLastCard: () => showNotification("LAST CARD!"),
+            onQuit: async () => {
+                soloGame = null;
+                await leaveCurrentRoom();
+            }
+        }
+    );
 }
 
 function startSolo() {
