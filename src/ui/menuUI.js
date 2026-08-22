@@ -3,8 +3,8 @@
  */
 export function renderMenu(container, handlers = {}) {
     container.innerHTML = `
-        <h1 class="menu-title">Card Clash</h1>
-        <p class="menu-subtitle">Kompetitif • Server-authoritative</p>
+        <h1 class="logo-card-clash">Card Clash</h1>
+        <p class="logo-sub">Online Card Arena</p>
 
         <div class="menu-actions">
             <button class="btn btn-primary" id="btn-solo">PLAY SOLO</button>

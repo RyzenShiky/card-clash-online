@@ -1,0 +1,30 @@
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Montserrat:wght@900&display=swap");
+
+.logo-card-clash {
+  font-family: "Fredoka", "Montserrat", system-ui, sans-serif;
+  font-size: clamp(2.2rem, 8vw, 3.5rem);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, #ffe600 0%, #ff3d00 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(3px 3px 0 #000)
+    drop-shadow(-1px -1px 0 #fff)
+    drop-shadow(6px 6px 12px rgba(0, 0, 0, 0.45));
+  transform: rotate(-6deg) skewX(-5deg);
+  display: inline-block;
+  line-height: 1.1;
+  user-select: none;
+}
+
+.logo-sub {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}

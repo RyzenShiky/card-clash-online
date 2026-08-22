@@ -1,19 +1,39 @@
-/* In-game table & hand */
 .game-table {
-    flex: 1;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
 }
 
-.hand {
-    display: flex;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-    justify-content: center;
-    max-width: 100%;
-    padding: 1rem 0;
+.opponents-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.opponent-chip {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  min-width: 72px;
+  text-align: center;
+  border: 1px solid transparent;
+}
+.opponent-chip.active-turn {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+}
+
+.discard-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
 }

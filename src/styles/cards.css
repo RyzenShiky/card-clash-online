@@ -1,0 +1,183 @@
+/* Professional card face — original Card Clash design (not official UNO assets) */
+
+.card-face {
+  --card-w: 72px;
+  --card-h: 102px;
+  width: var(--card-w);
+  height: var(--card-h);
+  border-radius: 10px;
+  border: 3px solid #fff;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.35),
+    inset 0 0 6px rgba(0, 0, 0, 0.15);
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  user-select: none;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
+}
+
+.card-face:hover {
+  transform: translateY(-8px) scale(1.05);
+  z-index: 5;
+}
+
+.card-face.playable {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 12px 3px rgba(255, 214, 0, 0.7),
+    0 6px 14px rgba(0, 0, 0, 0.35);
+}
+
+.card-face.red {
+  background: linear-gradient(145deg, #ff3b30, #c1121f);
+}
+.card-face.blue {
+  background: linear-gradient(145deg, #007aff, #004080);
+}
+.card-face.green {
+  background: linear-gradient(145deg, #34c759, #15732e);
+}
+.card-face.yellow {
+  background: linear-gradient(145deg, #ffcc00, #d48800);
+}
+.card-face.wild,
+.card-face.null {
+  background: linear-gradient(145deg, #2c2c2e, #111);
+}
+
+.card-face .center-ellipse {
+  width: 78%;
+  height: 62%;
+  background: #fff;
+  border-radius: 50%;
+  transform: rotate(-25deg);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+.card-face .card-value {
+  transform: rotate(25deg);
+  font-family: "Arial Black", "Montserrat", sans-serif;
+  font-size: 1.55rem;
+  font-weight: 900;
+  color: #1c1c1e;
+  line-height: 1;
+}
+
+.card-face.red .card-value { color: #c1121f; }
+.card-face.blue .card-value { color: #004080; }
+.card-face.green .card-value { color: #15732e; }
+.card-face.yellow .card-value { color: #a66a00; }
+.card-face.wild .card-value,
+.card-face.null .card-value { color: #1c1c1e; }
+
+.card-face .corner {
+  position: absolute;
+  font-family: "Arial Black", sans-serif;
+  font-size: 0.7rem;
+  color: #fff;
+  font-weight: 800;
+  line-height: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.card-face .corner.top-left { top: 5px; left: 6px; }
+.card-face .corner.bottom-right {
+  bottom: 5px;
+  right: 6px;
+  transform: rotate(180deg);
+}
+
+/* Colorblind symbols */
+.cb-symbol {
+  font-size: 0.55rem;
+  opacity: 0.95;
+}
+body.colorblind-on .cb-symbol { display: inline; }
+body:not(.colorblind-on) .cb-symbol { display: none; }
+
+/* Discard pile larger */
+.card-face.discard {
+  --card-w: 88px;
+  --card-h: 124px;
+  cursor: default;
+}
+.card-face.discard:hover { transform: none; }
+.card-face.discard .card-value { font-size: 2rem; }
+
+/* Fan hand */
+.hand-fan {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  min-height: 120px;
+  padding: 0.5rem 0 1rem;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.hand-fan .card-face {
+  margin-left: -18px;
+}
+.hand-fan .card-face:first-child { margin-left: 0; }
+
+/* Direction indicator */
+.turn-dir {
+  font-size: 1.25rem;
+  opacity: 0.85;
+}
+.turn-dir.cw::after { content: "↻"; }
+.turn-dir.ccw::after { content: "↺"; }
+
+/* Action bar */
+.game-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  width: 100%;
+  max-width: 360px;
+  margin-top: 0.5rem;
+}
+.game-actions .btn { max-width: 140px; padding: 0.65rem 1rem; font-size: 0.9rem; }
+
+.btn-uno {
+  background: linear-gradient(180deg, #ffe600, #ff3d00) !important;
+  color: #111 !important;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  animation: uno-pulse 1.2s ease-in-out infinite;
+}
+@keyframes uno-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+.challenge-banner {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  text-align: center;
+  width: 100%;
+  max-width: 360px;
+  font-size: 0.9rem;
+}
+
+.score-bar {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}

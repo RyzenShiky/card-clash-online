@@ -42,7 +42,7 @@ export function showAuthScreen(options = {}) {
 
     container.innerHTML = `
         <div class="auth-card">
-            <h1 class="menu-title">Card Clash</h1>
+            <h1 class="logo-card-clash">Card Clash</h1>
             <p class="menu-subtitle">Masuk untuk bermain</p>
 
             <div class="menu-actions" style="margin-top: 1.5rem">

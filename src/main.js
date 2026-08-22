@@ -34,8 +34,13 @@ import {
     subscribePublic,
     subscribeHand,
     playCardOnline,
-    drawCardOnline
+    drawCardOnline,
+    callUno,
+    challengeUno,
+    challengeWildDraw4,
+    acceptStack
 } from "./multiplayer/matchSync.js";
+import { sfx } from "./audio/sfx.js";
 import { logger } from "./utils/logger.js";
 
 let currentUser = null;
@@ -160,7 +165,11 @@ function startApplication() {
         onSolo: startSolo,
         onOnline: showOnlineMenu,
         onProfile: showProfileInfo,
-        onSettings: () => showNotification("Settings coming soon")
+        onSettings: () => {
+            document.body.classList.toggle("colorblind-on");
+            const on = document.body.classList.contains("colorblind-on");
+            showNotification(on ? "Colorblind mode ON" : "Colorblind mode OFF");
+        }
     });
 }
 
@@ -312,7 +321,11 @@ function enterMultiplayerMatch(roomId, room) {
     const boot = async () => {
         if (isHost) {
             try {
-                await initMatchOnHost(roomId, playerIds);
+                await initMatchOnHost(roomId, playerIds, {
+                    targetScore: room.settings?.targetScore ?? 500,
+                    stacking: room.settings?.customRules?.drawStacking ?? false,
+                    turnTimer: room.settings?.turnTimer ?? 30
+                });
             } catch (e) {
                 logger.error(e);
                 showNotification(e.message || "Gagal init match");
@@ -349,81 +362,67 @@ function enterMultiplayerMatch(roomId, room) {
                             const card = hand.find((c) => c.id === cardId);
                             let color = null;
                             if (card && (card.value === "wild" || card.value === "wild_draw4")) {
-                                color = ["red", "blue", "green", "yellow"][
-                                    Math.floor(Math.random() * 4)
-                                ];
+                                color = prompt("Pilih warna: red / blue / green / yellow", "red") || "red";
+                                color = color.toLowerCase().trim();
+                                if (!["red","blue","green","yellow"].includes(color)) color = "red";
                             }
                             await playCardOnline(roomId, currentUser.uid, cardId, color);
+                            sfx.playCard();
                         } catch (e) {
+                            sfx.error();
                             showNotification(e.message);
                         }
                     },
                     onDraw: async () => {
                         try {
                             await drawCardOnline(roomId, currentUser.uid);
+                            sfx.draw();
+                        } catch (e) {
+                            sfx.error();
+                            showNotification(e.message);
+                        }
+                    },
+                    onUno: async () => {
+                        try {
+                            await callUno(roomId, currentUser.uid);
+                            sfx.uno();
+                            showNotification("UNO!");
+                        } catch (e) {
+                            sfx.error();
+                            showNotification(e.message);
+                        }
+                    },
+                    onChallengeUno: async (targetUid) => {
+                        try {
+                            await challengeUno(roomId, currentUser.uid, targetUid);
+                            sfx.challenge();
+                            showNotification("Challenge UNO — penalti Draw 2!");
                         } catch (e) {
                             showNotification(e.message);
                         }
                     },
-                    onLastCard: () => showNotification("LAST CARD!"),
+                    onChallengeWd4: async () => {
+                        try {
+                            const r = await challengeWildDraw4(roomId, currentUser.uid);
+                            sfx.challenge();
+                            showNotification(
+                                r.wasIllegal
+                                    ? "Challenge berhasil! Lawan draw 4"
+                                    : "Challenge gagal — kamu draw 6"
+                            );
+                        } catch (e) {
+                            showNotification(e.message);
+                        }
+                    },
+                    onAcceptWd4: async () => {
+                        showNotification("WD4 diterima");
+                    },
                     onQuit: async () => {
                         cleanupMatchSubs();
                         soloGame = null;
                         await leaveCurrentRoom();
-                    }
-                }
-            );
+                    },
 
-            if (publicState.winner) {
-                const msg =
-                    publicState.winner === currentUser.uid
-                        ? "Kamu menang!"
-                        : "Pemenang: " + String(publicState.winner).slice(0, 8);
-                showNotification(msg);
-            }
-        };
-
-        matchUnsubs.push(
-            subscribePublic(roomId, (state) => {
-                publicState = state;
-                render();
-            })
-        );
-        matchUnsubs.push(
-            subscribeHand(roomId, currentUser.uid, (h) => {
-                hand = Array.isArray(h) ? h : [];
-                render();
-            })
-        );
-    };
-
-    boot();
-}
-
-function startSolo() {
-    if (!currentUser) return;
-    soloGame = new GameManager({
-        playerIds: [currentUser.uid, "ai-bot"],
-        isSolo: true
-    });
-    soloGame.start();
-
-    showScreen("game");
-    refreshSoloUI();
-}
-
-function refreshSoloUI() {
-    if (!soloGame || !currentUser) return;
-    const publicState = soloGame.getPublicView();
-    const hand = soloGame.getPrivateHand(currentUser.uid);
-
-    renderGame(
-        screens.game(),
-        {
-            publicState,
-            hand,
-            currentUid: currentUser.uid
-        },
         {
             onPlayCard: (cardId) => {
                 try {
