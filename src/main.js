@@ -51,7 +51,6 @@ import {
     isVoiceAvailable
 } from "./multiplayer/voiceChat.js";
 import { chooseBotAction } from "./game/botAI.js";
-import { pickWildColor } from "./ui/colorPicker.js";
 import { logger } from "./utils/logger.js";
 
 let currentUser = null;

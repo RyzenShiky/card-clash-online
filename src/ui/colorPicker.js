@@ -1,6 +1,6 @@
 /**
- * Pilih warna visual (ganti prompt teks)
- * @returns {Promise<'red'|'blue'|'green'|'yellow'|null>}
+ * Color picker + draw penalty toast
+ * v2 — exports: pickColor, pickWildColor, showDrawPenaltyAnim
  */
 export function pickColor() {
   return new Promise((resolve) => {
@@ -32,6 +32,10 @@ export function pickColor() {
       if (e.target === overlay) done(null);
     });
   });
+}
+
+export function pickWildColor() {
+  return pickColor();
 }
 
 export function showDrawPenaltyAnim(n, isMe) {
