@@ -41,6 +41,15 @@ import {
     acceptStack
 } from "./multiplayer/matchSync.js";
 import { sfx } from "./audio/sfx.js";
+import { mountChat } from "./ui/chatUI.js";
+import { initCheatEngine } from "./utils/cheatEngine.js";
+import {
+    joinVoiceChannel,
+    leaveVoiceChannel,
+    toggleMuteMic,
+    isVoiceAvailable
+} from "./multiplayer/voiceChat.js";
+import { chooseBotAction } from "./game/botAI.js";
 import { logger } from "./utils/logger.js";
 
 let currentUser = null;
@@ -48,6 +57,8 @@ let currentRoomId = null;
 let currentRoomCode = null;
 let roomUnsubscribe = null;
 let soloGame = null;
+let chatCleanup = null;
+let voiceMuted = false;
 let presenceCleanup = null;
 let authUnsub = null;
 
@@ -285,6 +296,12 @@ function enterLobby(roomId, roomCode) {
 }
 
 async function leaveCurrentRoom() {
+    if (chatCleanup) {
+        chatCleanup();
+        chatCleanup = null;
+    }
+    try { await leaveVoiceChannel(); } catch (_) {}
+    document.getElementById("btn-mic")?.remove();
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
@@ -318,6 +335,19 @@ function enterMultiplayerMatch(roomId, room) {
     const isHost = room.meta?.hostId === currentUser.uid;
 
     showScreen("game");
+
+    if (chatCleanup) chatCleanup();
+    chatCleanup = mountChat(document.getElementById("game-screen"), {
+        roomId,
+        uid: currentUser.uid,
+        displayName: currentUser.displayName || currentUser.uid.slice(0, 8)
+    });
+
+    // Voice optional (butuh Agora APP_ID)
+    if (isVoiceAvailable()) {
+        joinVoiceChannel(roomId, currentUser.uid);
+        ensureMicButton();
+    }
 
     const boot = async () => {
         if (isHost) {
@@ -574,44 +604,35 @@ function runAITurn() {
     if (soloGame.turn.currentPlayerId !== "ai-bot") return;
 
     const hand = soloGame.getPrivateHand("ai-bot");
-    const top = soloGame.topCard;
-    const color = soloGame.currentColor;
-
-    const canPlay = (card, topCard, currentColor) => {
-        if (!card || !topCard) return false;
-        if (card.value === "wild" || card.value === "wild_draw4") return true;
-        const effective = currentColor || topCard.color;
-        if (card.color === effective) return true;
-        if (card.value === topCard.value) return true;
-        return false;
-    };
-
-    let played = false;
-    for (const card of hand) {
-        if (canPlay(card, top, color)) {
-            try {
-                let chosen = null;
-                if (card.value === "wild" || card.value === "wild_draw4") {
-                    chosen = "red";
-                }
-                soloGame.playCard("ai-bot", card.id, chosen);
-                played = true;
-                break;
-            } catch (_) {}
-        }
-    }
-
-    if (!played) {
-        try {
+    const action = chooseBotAction(hand, soloGame.topCard, soloGame.currentColor, "normal");
+    try {
+        if (action.type === "play") {
+            soloGame.playCard("ai-bot", action.cardId, action.color || null);
+        } else {
             soloGame.drawCard("ai-bot");
-        } catch (_) {}
-    }
+        }
+    } catch (_) {}
 
     if (soloGame.winner === "ai-bot") {
         showNotification("AI menang!");
     }
-
     refreshSoloUI();
+}
+
+
+function ensureMicButton() {
+    if (document.getElementById("btn-mic")) return;
+    const btn = document.createElement("button");
+    btn.id = "btn-mic";
+    btn.className = "btn btn-secondary btn-mic";
+    btn.textContent = "🎙️ Mic";
+    btn.addEventListener("click", () => {
+        voiceMuted = !voiceMuted;
+        toggleMuteMic(voiceMuted);
+        btn.textContent = voiceMuted ? "🔇 Unmute" : "🎙️ Mic";
+        btn.classList.toggle("muted", voiceMuted);
+    });
+    document.body.appendChild(btn);
 }
 
 function showFatalError(error) {
@@ -632,5 +653,10 @@ function showFatalError(error) {
 window.__cardClashLogout = async () => {
     await logout();
 };
+
+initCheatEngine({
+    getRoomId: () => currentRoomId,
+    getUid: () => currentUser?.uid
+});
 
 boot();

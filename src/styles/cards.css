@@ -181,3 +181,9 @@ body:not(.colorblind-on) .cb-symbol { display: none; }
   color: var(--text-muted);
   margin-bottom: 0.5rem;
 }
+
+/* X-Ray cheat hint on opponent chips */
+body.xray-on .opponent-chip {
+  border-color: gold !important;
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
