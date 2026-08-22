@@ -1,10 +1,6 @@
 /**
  * Room Manager
  * Create / Join / Leave / Ready / Subscribe
- *
- * Join & leave memakai runTransaction agar anti race (tidak overflow maxPlayers).
- * Catatan production: idealnya create/join/leave dipindah ke Cloud Functions
- * + Security Rules ketat agar client tidak punya kekuasaan penuh atas room.
  */
 import {
     ref,
@@ -15,8 +11,7 @@ import {
     remove,
     onValue,
     off,
-    runTransaction,
-    serverTimestamp
+    runTransaction
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 import { database } from "../firebase/services.js";
 import { createRoomCode, resolveRoomCode, deleteRoomCode } from "./roomCode.js";
@@ -24,24 +19,21 @@ import { logger } from "../utils/logger.js";
 
 /**
  * Buat room baru.
- * @param {import("firebase/auth").User} user
- * @param {object} settings
- * @returns {Promise<{ roomId: string, roomCode: string }>}
  */
 export async function createRoom(user, settings = {}) {
     const roomsRef = ref(database, "rooms");
     const newRoomRef = push(roomsRef);
     const roomId = newRoomRef.key;
 
-    // Kode direservasi atomik dulu
     const roomCode = await createRoomCode(roomId);
+    const now = Date.now();
 
     const room = {
         meta: {
             hostId: user.uid,
             roomCode,
             status: "waiting",
-            createdAt: serverTimestamp()
+            createdAt: now
         },
         settings: {
             maxPlayers: settings.maxPlayers ?? 4,
@@ -65,12 +57,25 @@ export async function createRoom(user, settings = {}) {
                 uid: user.uid,
                 ready: false,
                 connected: true,
-                joinedAt: Date.now()
+                joinedAt: now
             }
         }
     };
 
-    await set(newRoomRef, room);
+    try {
+        await set(newRoomRef, room);
+    } catch (err) {
+        // Rollback room code jika write room gagal
+        try {
+            await deleteRoomCode(roomCode);
+        } catch (_) {}
+        logger.error("[Room] Create set() failed:", err.code, err.message);
+        throw new Error(
+            "Gagal menyimpan room. Cek Security Rules (rooms write). " +
+                (err.message || "")
+        );
+    }
+
     await set(ref(database, `playerRooms/${user.uid}/${roomId}`), true);
 
     logger.info("[Room] Created:", roomId, "code:", roomCode);
@@ -78,73 +83,107 @@ export async function createRoom(user, settings = {}) {
 }
 
 /**
- * Join room via room code — ATOMIC (transaction).
- * Mencegah dua pemain masuk bersamaan melebihi maxPlayers.
- *
- * @param {import("firebase/auth").User} user
- * @param {string} code
- * @returns {Promise<{ roomId: string, roomCode: string }>}
+ * Join room via room code.
+ * 1) resolve code → roomId
+ * 2) get room (diagnostik permission)
+ * 3) transaction atomic add player
  */
 export async function joinRoomByCode(user, code) {
-    const roomId = await resolveRoomCode(code);
+    const normalized = String(code).trim().toUpperCase();
+    logger.info("[Room] Join attempt code:", normalized);
+
+    const roomId = await resolveRoomCode(normalized);
     if (!roomId) {
         throw new Error("Kode room tidak ditemukan.");
     }
 
+    logger.info("[Room] Resolved roomId:", roomId);
     const roomRef = ref(database, `rooms/${roomId}`);
 
-    let outcome = "ok"; // ok | not_found | not_waiting | full | error
+    // Diagnostik: coba baca dulu
+    let existing = null;
+    try {
+        const snap = await get(roomRef);
+        if (!snap.exists()) {
+            logger.error(
+                "[Room] roomCodes ada tapi rooms/" +
+                    roomId +
+                    " tidak ada. Room create mungkin gagal / terhapus."
+            );
+            throw new Error(
+                "Room sudah tidak ada di database. Host harus buat room baru."
+            );
+        }
+        existing = snap.val();
+        logger.info(
+            "[Room] Read OK. status=",
+            existing?.meta?.status,
+            "players=",
+            Object.keys(existing?.players || {}).length
+        );
+    } catch (err) {
+        if (err.message?.includes("sudah tidak ada")) throw err;
+        const msg = err?.message || String(err);
+        if (/permission|PERMISSION/i.test(msg) || err?.code === "PERMISSION_DENIED") {
+            throw new Error(
+                "Rules memblokir baca room. Publish rules terbaru (status waiting boleh di-read)."
+            );
+        }
+        throw err;
+    }
 
+    if (existing?.meta?.status !== "waiting") {
+        throw new Error("Room sudah dimulai atau ditutup.");
+    }
+
+    const maxPlayers = existing?.settings?.maxPlayers ?? 4;
+    const players = existing?.players || {};
+    if (!players[user.uid] && Object.keys(players).length >= maxPlayers) {
+        throw new Error("Room sudah penuh.");
+    }
+
+    // Atomic join
+    let outcome = "ok";
     let tx;
     try {
         tx = await runTransaction(roomRef, (room) => {
             if (room === null) {
                 outcome = "not_found";
-                return; // abort
+                return;
             }
-
-            const status = room.meta?.status;
-            if (status !== "waiting") {
+            if (room.meta?.status !== "waiting") {
                 outcome = "not_waiting";
                 return;
             }
 
-            const players = room.players || {};
-            const maxPlayers = room.settings?.maxPlayers ?? 4;
-            const playerCount = Object.keys(players).length;
+            const plist = room.players || {};
+            const max = room.settings?.maxPlayers ?? 4;
 
-            // Sudah anggota → cukup set connected (reconnect ke lobby)
-            if (players[user.uid]) {
-                players[user.uid] = {
-                    ...players[user.uid],
-                    connected: true
-                };
-                room.players = players;
-                outcome = "ok";
+            if (plist[user.uid]) {
+                plist[user.uid] = { ...plist[user.uid], connected: true };
+                room.players = plist;
                 return room;
             }
 
-            if (playerCount >= maxPlayers) {
+            if (Object.keys(plist).length >= max) {
                 outcome = "full";
-                return; // abort — room penuh
+                return;
             }
 
-            // Tambah pemain baru
-            players[user.uid] = {
+            plist[user.uid] = {
                 uid: user.uid,
                 ready: false,
                 connected: true,
                 joinedAt: Date.now()
             };
-            room.players = players;
-            outcome = "ok";
+            room.players = plist;
             return room;
         });
     } catch (err) {
-        const code = err?.code || "";
-        if (code === "PERMISSION_DENIED" || /permission/i.test(err?.message || "")) {
+        logger.error("[Room] Transaction error:", err.code, err.message);
+        if (/permission|PERMISSION/i.test(err?.message || "") || err?.code === "PERMISSION_DENIED") {
             throw new Error(
-                "Akses room ditolak (Security Rules). Pastikan rules mengizinkan read room berstatus waiting."
+                "Rules memblokir write join. Pastikan rooms write mengizinkan status waiting."
             );
         }
         throw err;
@@ -152,69 +191,54 @@ export async function joinRoomByCode(user, code) {
 
     if (!tx.committed) {
         if (outcome === "not_found") {
-            throw new Error(
-                "Room sudah tidak ada. (Atau rules memblokir read — publish rules terbaru.)"
-            );
+            throw new Error("Room sudah tidak ada.");
         }
-        if (outcome === "not_waiting") throw new Error("Room sudah dimulai atau ditutup.");
-        if (outcome === "full") throw new Error("Room sudah penuh.");
+        if (outcome === "not_waiting") {
+            throw new Error("Room sudah dimulai atau ditutup.");
+        }
+        if (outcome === "full") {
+            throw new Error("Room sudah penuh.");
+        }
         throw new Error("Gagal bergabung ke room. Coba lagi.");
     }
 
     await set(ref(database, `playerRooms/${user.uid}/${roomId}`), true);
 
-    const roomCode =
-        tx.snapshot.val()?.meta?.roomCode || String(code).trim().toUpperCase();
-
-    logger.info("[Room] Joined (atomic):", roomId);
+    const roomCode = tx.snapshot.val()?.meta?.roomCode || normalized;
+    logger.info("[Room] Joined OK:", roomId);
     return { roomId, roomCode };
 }
 
 /**
- * Leave room — transaction untuk host migration & cleanup aman.
- * @param {string} uid
- * @param {string} roomId
+ * Leave room
  */
 export async function leaveRoom(uid, roomId) {
     const roomRef = ref(database, `rooms/${roomId}`);
     let deletedCode = null;
     let roomDeleted = false;
 
-    const tx = await runTransaction(roomRef, (room) => {
+    await runTransaction(roomRef, (room) => {
         if (room === null) return null;
 
         const players = { ...(room.players || {}) };
-        if (!players[uid]) {
-            // Bukan anggota — biarkan apa adanya
-            return room;
-        }
+        if (!players[uid]) return room;
 
         delete players[uid];
-
         const remaining = Object.keys(players);
 
         if (remaining.length === 0) {
-            // Room kosong → hapus
             deletedCode = room.meta?.roomCode || null;
             roomDeleted = true;
             return null;
         }
 
         room.players = players;
-
-        // Host migration
         if (room.meta?.hostId === uid) {
-            room.meta = {
-                ...room.meta,
-                hostId: remaining[0]
-            };
-            logger.info("[Room] Host will migrate to:", remaining[0]);
+            room.meta = { ...room.meta, hostId: remaining[0] };
         }
-
         return room;
     });
 
-    // Cleanup mapping player
     try {
         await remove(ref(database, `playerRooms/${uid}/${roomId}`));
     } catch (_) {}
@@ -224,39 +248,25 @@ export async function leaveRoom(uid, roomId) {
             await deleteRoomCode(deletedCode);
         } catch (_) {}
         logger.info("[Room] Deleted empty room:", roomId);
-    } else if (tx.committed) {
+    } else {
         logger.info("[Room] Left:", roomId);
     }
 }
 
 /**
- * Set ready — transaction kecil agar konsisten dengan state terbaru.
- * @param {string} roomId
- * @param {string} uid
- * @param {boolean} ready
+ * Set ready
  */
 export async function setReady(roomId, uid, ready) {
     const playerRef = ref(database, `rooms/${roomId}/players/${uid}`);
-
     const tx = await runTransaction(playerRef, (player) => {
-        if (player === null) return; // bukan anggota
-        return {
-            ...player,
-            ready: !!ready
-        };
+        if (player === null) return;
+        return { ...player, ready: !!ready };
     });
-
     if (!tx.committed) {
         throw new Error("Gagal update ready (bukan anggota room?).");
     }
 }
 
-/**
- * Subscribe room changes.
- * @param {string} roomId
- * @param {(data: object|null) => void} callback
- * @returns {() => void} unsubscribe
- */
 export function subscribeRoom(roomId, callback) {
     const roomRef = ref(database, `rooms/${roomId}`);
     onValue(roomRef, (snap) => {
@@ -265,10 +275,6 @@ export function subscribeRoom(roomId, callback) {
     return () => off(roomRef);
 }
 
-/**
- * Ambil data room sekali.
- * @param {string} roomId
- */
 export async function getRoom(roomId) {
     const snap = await get(ref(database, `rooms/${roomId}`));
     return snap.exists() ? snap.val() : null;
