@@ -1,0 +1,49 @@
+/* Lobby / multiplayer room */
+.lobby-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    gap: 0.5rem;
+}
+
+.lobby-code {
+    font-family: ui-monospace, monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    background: var(--surface);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--surface-2);
+}
+
+.player-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 1.5rem 0;
+}
+
+.player-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+}
+
+.player-item.host::after {
+    content: "HOST";
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+}
+
+.player-item.ready {
+    border-left: 3px solid var(--success);
+}

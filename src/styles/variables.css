@@ -1,0 +1,18 @@
+/* Design tokens */
+:root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-2: #334155;
+    --primary: #3b82f6;
+    --primary-hover: #2563eb;
+    --accent: #f59e0b;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --max-app-width: 480px;
+}
