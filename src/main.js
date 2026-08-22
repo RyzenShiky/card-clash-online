@@ -306,7 +306,9 @@ let matchUnsubs = [];
 
 function cleanupMatchSubs() {
     matchUnsubs.forEach((u) => {
-        try { u(); } catch (_) {}
+        try {
+            u();
+        } catch (_) {}
     });
     matchUnsubs = [];
 }
@@ -317,7 +319,6 @@ function enterMultiplayerMatch(roomId, room) {
 
     showScreen("game");
 
-    // Host deals once into Firebase
     const boot = async () => {
         if (isHost) {
             try {
@@ -339,34 +340,72 @@ function enterMultiplayerMatch(roomId, room) {
 
         const render = () => {
             if (!publicState) return;
+
             const view = {
                 status: publicState.status,
                 topCard: publicState.topCard,
                 currentColor: publicState.currentColor,
                 currentTurn: publicState.currentTurn,
                 direction: publicState.direction,
-                drawPileCount: publicState.drawPileCount ?? publicState.drawPile?.length ?? 0,
+                drawPileCount:
+                    publicState.drawPileCount ??
+                    publicState.drawPile?.length ??
+                    0,
                 players: (publicState.playerIds || playerIds).map((uid) => ({
                     uid,
                     handCount: publicState.handCounts?.[uid] ?? 0
                 })),
-                winner: publicState.winner
+                winner: publicState.winner,
+                scores: publicState.scores,
+                targetScore: publicState.targetScore,
+                challenge: publicState.challenge,
+                stackAmount: publicState.stackAmount,
+                stacking: publicState.stacking,
+                stackType: publicState.stackType,
+                pendingUno: publicState.pendingUno,
+                handCounts: publicState.handCounts
             };
 
             renderGame(
                 screens.game(),
-                { publicState: view, hand, currentUid: currentUser.uid },
+                {
+                    publicState: view,
+                    hand,
+                    currentUid: currentUser.uid
+                },
                 {
                     onPlayCard: async (cardId) => {
                         try {
                             const card = hand.find((c) => c.id === cardId);
                             let color = null;
-                            if (card && (card.value === "wild" || card.value === "wild_draw4")) {
-                                color = prompt("Pilih warna: red / blue / green / yellow", "red") || "red";
-                                color = color.toLowerCase().trim();
-                                if (!["red","blue","green","yellow"].includes(color)) color = "red";
+                            if (
+                                card &&
+                                (card.value === "wild" ||
+                                    card.value === "wild_draw4")
+                            ) {
+                                color =
+                                    prompt(
+                                        "Pilih warna: red / blue / green / yellow",
+                                        "red"
+                                    ) || "red";
+                                color = String(color).toLowerCase().trim();
+                                if (
+                                    ![
+                                        "red",
+                                        "blue",
+                                        "green",
+                                        "yellow"
+                                    ].includes(color)
+                                ) {
+                                    color = "red";
+                                }
                             }
-                            await playCardOnline(roomId, currentUser.uid, cardId, color);
+                            await playCardOnline(
+                                roomId,
+                                currentUser.uid,
+                                cardId,
+                                color
+                            );
                             sfx.playCard();
                         } catch (e) {
                             sfx.error();
@@ -394,16 +433,25 @@ function enterMultiplayerMatch(roomId, room) {
                     },
                     onChallengeUno: async (targetUid) => {
                         try {
-                            await challengeUno(roomId, currentUser.uid, targetUid);
+                            await challengeUno(
+                                roomId,
+                                currentUser.uid,
+                                targetUid
+                            );
                             sfx.challenge();
-                            showNotification("Challenge UNO — penalti Draw 2!");
+                            showNotification(
+                                "Challenge UNO — penalti Draw 2!"
+                            );
                         } catch (e) {
                             showNotification(e.message);
                         }
                     },
                     onChallengeWd4: async () => {
                         try {
-                            const r = await challengeWildDraw4(roomId, currentUser.uid);
+                            const r = await challengeWildDraw4(
+                                roomId,
+                                currentUser.uid
+                            );
                             sfx.challenge();
                             showNotification(
                                 r.wasIllegal
@@ -421,19 +469,79 @@ function enterMultiplayerMatch(roomId, room) {
                         cleanupMatchSubs();
                         soloGame = null;
                         await leaveCurrentRoom();
-                    },
+                    }
+                }
+            );
 
+            if (publicState.winner) {
+                sfx.win();
+                const msg =
+                    publicState.winner === currentUser.uid
+                        ? "Kamu menang!"
+                        : "Pemenang: " +
+                          String(publicState.winner).slice(0, 8);
+                showNotification(msg);
+            }
+        };
+
+        matchUnsubs.push(
+            subscribePublic(roomId, (state) => {
+                publicState = state;
+                render();
+            })
+        );
+        matchUnsubs.push(
+            subscribeHand(roomId, currentUser.uid, (h) => {
+                hand = Array.isArray(h) ? h : [];
+                render();
+            })
+        );
+    };
+
+    boot();
+}
+
+function startSolo() {
+    if (!currentUser) return;
+    soloGame = new GameManager({
+        playerIds: [currentUser.uid, "ai-bot"],
+        isSolo: true
+    });
+    soloGame.start();
+    showScreen("game");
+    refreshSoloUI();
+}
+
+function refreshSoloUI() {
+    if (!soloGame || !currentUser) return;
+    const publicState = soloGame.getPublicView();
+    const hand = soloGame.getPrivateHand(currentUser.uid);
+
+    renderGame(
+        screens.game(),
+        {
+            publicState,
+            hand,
+            currentUid: currentUser.uid
+        },
         {
             onPlayCard: (cardId) => {
                 try {
                     const card = hand.find((c) => c.id === cardId);
                     let color = null;
-                    if (card && (card.value === "wild" || card.value === "wild_draw4")) {
+                    if (
+                        card &&
+                        (card.value === "wild" || card.value === "wild_draw4")
+                    ) {
                         color = ["red", "blue", "green", "yellow"][
                             Math.floor(Math.random() * 4)
                         ];
                     }
-                    const result = soloGame.playCard(currentUser.uid, cardId, color);
+                    const result = soloGame.playCard(
+                        currentUser.uid,
+                        cardId,
+                        color
+                    );
                     if (result.type === "win") {
                         showNotification("Kamu menang!");
                     }
@@ -452,8 +560,7 @@ function enterMultiplayerMatch(roomId, room) {
                     showNotification(e.message);
                 }
             },
-            onLastCard: () =>
-                showNotification("LAST CARD! (penalty system di Phase berikutnya)"),
+            onUno: () => showNotification("UNO!"),
             onQuit: () => {
                 soloGame = null;
                 startApplication();
