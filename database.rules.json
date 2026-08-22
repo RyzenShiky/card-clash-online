@@ -1,0 +1,185 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "players": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+
+        "public": {
+          ".validate": "newData.hasChildren(['displayName', 'accountType'])",
+
+          "displayName": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 32"
+          },
+          "photoURL": {
+            ".validate": "newData.isString() || newData.val() === null"
+          },
+          "accountType": {
+            ".validate": "newData.val() === 'guest' || newData.val() === 'google'"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber() || newData.val() === now"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber() || newData.val() === now"
+          },
+          "linkedAt": {
+            ".validate": "newData.isNumber() || newData.val() === now"
+          }
+        },
+
+        "stats": {
+          ".validate": "newData.hasChildren()"
+        },
+
+        "private": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
+
+    "presence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+
+        ".validate": "newData.hasChildren(['state', 'lastChanged'])",
+
+        "state": {
+          ".validate": "newData.val() === 'online' || newData.val() === 'offline'"
+        },
+        "lastChanged": {
+          ".validate": "newData.isNumber() || newData.val() === now"
+        }
+      }
+    },
+
+    "playerRooms": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+
+        "$roomId": {
+          ".validate": "newData.val() === true || !newData.exists()"
+        }
+      }
+    },
+
+    "roomCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('roomId').val() === newData.child('roomId').val())",
+
+        ".validate": "newData.hasChildren(['roomId']) && newData.child('roomId').isString()",
+
+        "roomId": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null && (data.child('players').child(auth.uid).exists() || !data.exists())",
+
+        ".write": "auth != null && (!data.exists() || data.child('players').child(auth.uid).exists() || data.child('meta').child('hostId').val() === auth.uid)",
+
+        "meta": {
+          ".validate": "newData.hasChildren(['hostId', 'status'])",
+
+          "hostId": {
+            ".validate": "newData.isString()"
+          },
+          "roomCode": {
+            ".validate": "newData.isString() && newData.val().length === 6"
+          },
+          "status": {
+            ".validate": "newData.val() === 'waiting' || newData.val() === 'starting' || newData.val() === 'playing' || newData.val() === 'paused' || newData.val() === 'finished' || newData.val() === 'closed'"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber() || newData.val() === now"
+          }
+        },
+
+        "settings": {
+          "maxPlayers": {
+            ".validate": "newData.isNumber() && newData.val() >= 2 && newData.val() <= 4"
+          },
+          "isPrivate": {
+            ".validate": "newData.isBoolean()"
+          },
+          "turnTimer": {
+            ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 120"
+          }
+        },
+
+        "players": {
+          "$uid": {
+            ".write": "auth != null && (auth.uid === $uid || root.child('rooms').child($roomId).child('meta').child('hostId').val() === auth.uid || !data.exists())",
+
+            ".validate": "newData.hasChildren(['uid'])",
+
+            "uid": {
+              ".validate": "newData.isString() && newData.val() === $uid"
+            },
+            "ready": {
+              ".validate": "newData.isBoolean()"
+            },
+            "connected": {
+              ".validate": "newData.isBoolean()"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber() || newData.val() === now"
+            }
+          }
+        }
+      }
+    },
+
+    "matches": {
+      "$matchId": {
+        ".read": "auth != null && data.child('public').child('playerIds').child(auth.uid).exists()",
+        ".write": false
+      }
+    },
+
+    "privateGameData": {
+      "$matchId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        }
+      }
+    },
+
+    "matchmaking": {
+      "casual": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+
+          "uid": {
+            ".validate": "newData.val() === auth.uid"
+          }
+        }
+      },
+      "ranked": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+
+          "uid": {
+            ".validate": "newData.val() === auth.uid"
+          }
+        }
+      }
+    }
+  }
+}
