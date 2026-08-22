@@ -1,52 +1,45 @@
 /**
- * Rules Engine (client-side validation helper)
- * Server tetap authoritative di multiplayer kompetitif.
+ * Rules helpers — validasi kartu, skor, warna
  */
 
-/**
- * Apakah kartu boleh dimainkan di atas topCard.
- * @param {object} card - { color, value }
- * @param {object} topCard - { color, value }
- * @param {string|null} currentColor - warna aktif (setelah wild)
- * @param {object} [rules] - custom rules
- * @returns {boolean}
- */
 export function canPlayCard(card, topCard, currentColor = null, rules = {}) {
     if (!card || !topCard) return false;
 
-    // Wild selalu boleh (kecuali forcePlay + ada kartu matching - implement later)
+    // Wild selalu boleh (kecuali sedang wajib stack — dicek di matchSync)
     if (card.value === "wild" || card.value === "wild_draw4") {
         return true;
     }
 
-    const effectiveColor = currentColor || topCard.color;
+    // Warna aktif: prioritas currentColor (setelah pilih warna wild)
+    const activeColor = currentColor || topCard.color || null;
 
-    // Warna sama
-    if (card.color === effectiveColor) return true;
+    if (activeColor && card.color === activeColor) {
+        return true;
+    }
 
-    // Nilai sama
-    if (card.value === topCard.value) return true;
+    // Match value (angka / skip / reverse / draw2)
+    // Jangan match value wild / wild_draw4 dengan kartu biasa
+    const topVal = topCard.value;
+    if (
+        topVal &&
+        topVal !== "wild" &&
+        topVal !== "wild_draw4" &&
+        card.value === topVal
+    ) {
+        return true;
+    }
 
     return false;
 }
 
-/**
- * Apakah pemain harus bilang "LAST CARD" (1 kartu tersisa).
- */
 export function shouldCallLastCard(handSize) {
     return handSize === 1;
 }
 
-/**
- * Cek win condition.
- */
 export function isWinner(hand) {
     return Array.isArray(hand) && hand.length === 0;
 }
 
-/**
- * Hitung score hand (untuk penalty / target score).
- */
 export function scoreHand(hand) {
     if (!hand) return 0;
     return hand.reduce((sum, c) => {
@@ -55,4 +48,19 @@ export function scoreHand(hand) {
         const n = parseInt(c.value, 10);
         return sum + (isNaN(n) ? 0 : n);
     }, 0);
+}
+
+export function normalizeColor(input) {
+    const s = String(input || "").toLowerCase().trim();
+    const map = {
+        red: "red",
+        merah: "red",
+        blue: "blue",
+        biru: "blue",
+        green: "green",
+        hijau: "green",
+        yellow: "yellow",
+        kuning: "yellow"
+    };
+    return map[s] || null;
 }

@@ -1,4 +1,4 @@
-/* Professional card face — original Card Clash design (not official UNO assets) */
+/* Professional card face — warna FIXED (tidak terpengaruh dark mode HP/tab) */
 
 .card-face {
   --card-w: 72px;
@@ -6,7 +6,7 @@
   width: var(--card-w);
   height: var(--card-h);
   border-radius: 10px;
-  border: 3px solid #fff;
+  border: 3px solid #ffffff !important;
   box-shadow:
     0 6px 14px rgba(0, 0, 0, 0.35),
     inset 0 0 6px rgba(0, 0, 0, 0.15);
@@ -19,6 +19,9 @@
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   flex-shrink: 0;
+  /* Paksa warna sendiri, jangan ikut prefers-color-scheme */
+  forced-color-adjust: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .card-face:hover {
@@ -34,26 +37,44 @@
 }
 
 .card-face.red {
-  background: linear-gradient(145deg, #ff3b30, #c1121f);
+  background: linear-gradient(145deg, #ff3b30, #c1121f) !important;
 }
 .card-face.blue {
-  background: linear-gradient(145deg, #007aff, #004080);
+  background: linear-gradient(145deg, #007aff, #004080) !important;
 }
 .card-face.green {
-  background: linear-gradient(145deg, #34c759, #15732e);
+  background: linear-gradient(145deg, #34c759, #15732e) !important;
 }
 .card-face.yellow {
-  background: linear-gradient(145deg, #ffcc00, #d48800);
+  background: linear-gradient(145deg, #ffcc00, #d48800) !important;
 }
 .card-face.wild,
 .card-face.null {
-  background: linear-gradient(145deg, #2c2c2e, #111);
+  background: linear-gradient(145deg, #2c2c2e, #111111) !important;
+}
+
+/* Setelah pilih warna, top wild menampilkan warna aktif */
+.card-face.wild.red,
+.card-face.null.red {
+  background: linear-gradient(145deg, #ff3b30, #c1121f) !important;
+}
+.card-face.wild.blue,
+.card-face.null.blue {
+  background: linear-gradient(145deg, #007aff, #004080) !important;
+}
+.card-face.wild.green,
+.card-face.null.green {
+  background: linear-gradient(145deg, #34c759, #15732e) !important;
+}
+.card-face.wild.yellow,
+.card-face.null.yellow {
+  background: linear-gradient(145deg, #ffcc00, #d48800) !important;
 }
 
 .card-face .center-ellipse {
   width: 78%;
   height: 62%;
-  background: #fff;
+  background: #ffffff !important;
   border-radius: 50%;
   transform: rotate(-25deg);
   display: flex;
@@ -67,22 +88,20 @@
   font-family: "Arial Black", "Montserrat", sans-serif;
   font-size: 1.55rem;
   font-weight: 900;
-  color: #1c1c1e;
+  color: #1c1c1e !important;
   line-height: 1;
 }
 
-.card-face.red .card-value { color: #c1121f; }
-.card-face.blue .card-value { color: #004080; }
-.card-face.green .card-value { color: #15732e; }
-.card-face.yellow .card-value { color: #a66a00; }
-.card-face.wild .card-value,
-.card-face.null .card-value { color: #1c1c1e; }
+.card-face.red .card-value { color: #c1121f !important; }
+.card-face.blue .card-value { color: #004080 !important; }
+.card-face.green .card-value { color: #15732e !important; }
+.card-face.yellow .card-value { color: #a66a00 !important; }
 
 .card-face .corner {
   position: absolute;
   font-family: "Arial Black", sans-serif;
   font-size: 0.7rem;
-  color: #fff;
+  color: #ffffff !important;
   font-weight: 800;
   line-height: 1;
   display: flex;
@@ -98,15 +117,10 @@
   transform: rotate(180deg);
 }
 
-/* Colorblind symbols */
-.cb-symbol {
-  font-size: 0.55rem;
-  opacity: 0.95;
-}
+.cb-symbol { font-size: 0.55rem; opacity: 0.95; }
 body.colorblind-on .cb-symbol { display: inline; }
 body:not(.colorblind-on) .cb-symbol { display: none; }
 
-/* Discard pile larger */
 .card-face.discard {
   --card-w: 88px;
   --card-h: 124px;
@@ -115,7 +129,6 @@ body:not(.colorblind-on) .cb-symbol { display: none; }
 .card-face.discard:hover { transform: none; }
 .card-face.discard .card-value { font-size: 2rem; }
 
-/* Fan hand */
 .hand-fan {
   display: flex;
   justify-content: center;
@@ -126,21 +139,13 @@ body:not(.colorblind-on) .cb-symbol { display: none; }
   max-width: 100%;
   overflow-x: auto;
 }
-
-.hand-fan .card-face {
-  margin-left: -18px;
-}
+.hand-fan .card-face { margin-left: -18px; }
 .hand-fan .card-face:first-child { margin-left: 0; }
 
-/* Direction indicator */
-.turn-dir {
-  font-size: 1.25rem;
-  opacity: 0.85;
-}
+.turn-dir { font-size: 1.25rem; opacity: 0.85; }
 .turn-dir.cw::after { content: "↻"; }
 .turn-dir.ccw::after { content: "↺"; }
 
-/* Action bar */
 .game-actions {
   display: flex;
   flex-wrap: wrap;
@@ -149,8 +154,14 @@ body:not(.colorblind-on) .cb-symbol { display: none; }
   width: 100%;
   max-width: 360px;
   margin-top: 0.5rem;
+  position: relative;
+  z-index: 2;
 }
-.game-actions .btn { max-width: 140px; padding: 0.65rem 1rem; font-size: 0.9rem; }
+.game-actions .btn {
+  max-width: 140px;
+  padding: 0.65rem 1rem;
+  font-size: 0.9rem;
+}
 
 .btn-uno {
   background: linear-gradient(180deg, #ffe600, #ff3d00) !important;
@@ -182,8 +193,104 @@ body:not(.colorblind-on) .cb-symbol { display: none; }
   margin-bottom: 0.5rem;
 }
 
-/* X-Ray cheat hint on opponent chips */
+/* Color picker overlay */
+.color-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.color-picker {
+  background: #1e293b;
+  border-radius: 16px;
+  padding: 1.25rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  width: min(280px, 90vw);
+}
+.color-picker h3 {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+}
+.color-swatch {
+  height: 56px;
+  border-radius: 12px;
+  border: 3px solid #fff;
+  cursor: pointer;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.color-swatch.red { background: #e11d48; }
+.color-swatch.blue { background: #2563eb; }
+.color-swatch.green { background: #16a34a; }
+.color-swatch.yellow { background: #eab308; color: #111; text-shadow: none; }
+
+/* Draw penalty toast anim */
+.draw-penalty-toast {
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ef4444;
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.25rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  z-index: 150;
+  animation: draw-pop 1.2s ease forwards;
+  pointer-events: none;
+}
+@keyframes draw-pop {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.6); }
+  20% { opacity: 1; transform: translateX(-50%) scale(1.1); }
+  70% { opacity: 1; transform: translateX(-50%) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+}
+
 body.xray-on .opponent-chip {
   border-color: gold !important;
   box-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
+}
+
+/* Touch / drag feedback */
+.card-face.dragging {
+  z-index: 40 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45) !important;
+  cursor: grabbing;
+}
+
+.discard-zone.drop-target {
+  outline: 3px dashed #fbbf24;
+  outline-offset: 6px;
+  border-radius: 14px;
+}
+
+.discard-zone.drop-target .card-face.discard {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 3px #fbbf24, 0 8px 20px rgba(0,0,0,0.4);
+}
+
+.mobile-play-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 0.25rem;
+}
+
+@media (pointer: coarse) {
+  .card-face {
+    --card-w: 64px;
+    --card-h: 92px;
+  }
+  .hand-fan .card-face {
+    margin-left: -14px;
+  }
 }

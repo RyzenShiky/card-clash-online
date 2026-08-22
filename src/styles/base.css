@@ -53,3 +53,11 @@ body {
         border-right: 1px solid var(--surface);
     }
 }
+
+/* Cegah OS dark mode mengubah warna kartu / UI game */
+html {
+  color-scheme: only light;
+}
+#app, .screen, .card-face {
+  color-scheme: only light;
+}

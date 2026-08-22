@@ -41,6 +41,7 @@ import {
     acceptStack
 } from "./multiplayer/matchSync.js";
 import { sfx } from "./audio/sfx.js";
+import { pickColor, showDrawPenaltyAnim } from "./ui/colorPicker.js";
 import { mountChat } from "./ui/chatUI.js";
 import { initCheatEngine } from "./utils/cheatEngine.js";
 import {
@@ -50,6 +51,7 @@ import {
     isVoiceAvailable
 } from "./multiplayer/voiceChat.js";
 import { chooseBotAction } from "./game/botAI.js";
+import { pickWildColor } from "./ui/colorPicker.js";
 import { logger } from "./utils/logger.js";
 
 let currentUser = null;
@@ -336,18 +338,25 @@ function enterMultiplayerMatch(roomId, room) {
 
     showScreen("game");
 
-    if (chatCleanup) chatCleanup();
-    chatCleanup = mountChat(document.getElementById("game-screen"), {
-        roomId,
-        uid: currentUser.uid,
-        displayName: currentUser.displayName || currentUser.uid.slice(0, 8)
-    });
-
-    // Voice optional (butuh Agora APP_ID)
+    // Voice optional
     if (isVoiceAvailable()) {
         joinVoiceChannel(roomId, currentUser.uid);
         ensureMicButton();
     }
+
+    const ensureChat = () => {
+        const host =
+            document.querySelector("#chat-slot") ||
+            document.getElementById("game-screen");
+        if (!host) return;
+        if (chatCleanup) chatCleanup();
+        chatCleanup = mountChat(host, {
+            roomId,
+            uid: currentUser.uid,
+            displayName:
+                currentUser.displayName || currentUser.uid.slice(0, 8)
+        });
+    };
 
     const boot = async () => {
         if (isHost) {
@@ -404,30 +413,17 @@ function enterMultiplayerMatch(roomId, room) {
                     currentUid: currentUser.uid
                 },
                 {
-                    onPlayCard: async (cardId) => {
+                    onPlayCard: async (cardId, chosenColor = null) => {
                         try {
-                            const card = hand.find((c) => c.id === cardId);
-                            let color = null;
-                            if (
-                                card &&
-                                (card.value === "wild" ||
-                                    card.value === "wild_draw4")
-                            ) {
-                                color =
-                                    prompt(
-                                        "Pilih warna: red / blue / green / yellow",
-                                        "red"
-                                    ) || "red";
-                                color = String(color).toLowerCase().trim();
+                            let color = chosenColor;
+                            if (!color) {
+                                const card = (hand || []).find((c) => c.id === cardId);
                                 if (
-                                    ![
-                                        "red",
-                                        "blue",
-                                        "green",
-                                        "yellow"
-                                    ].includes(color)
+                                    card &&
+                                    (card.value === "wild" || card.value === "wild_draw4")
                                 ) {
-                                    color = "red";
+                                    color = await pickColor();
+                                    if (!color) return;
                                 }
                             }
                             await playCardOnline(
@@ -503,6 +499,8 @@ function enterMultiplayerMatch(roomId, room) {
                 }
             );
 
+            ensureChat();
+
             if (publicState.winner) {
                 sfx.win();
                 const msg =
@@ -516,7 +514,15 @@ function enterMultiplayerMatch(roomId, room) {
 
         matchUnsubs.push(
             subscribePublic(roomId, (state) => {
+                const prevAnim = publicState?.lastAnim?.at;
                 publicState = state;
+                if (state?.lastAnim?.at && state.lastAnim.at !== prevAnim) {
+                    showDrawPenaltyAnim(
+                        state.lastAnim.n || 0,
+                        state.lastAnim.uid === currentUser.uid
+                    );
+                    sfx.draw();
+                }
                 render();
             })
         );
@@ -633,6 +639,17 @@ function ensureMicButton() {
         btn.classList.toggle("muted", voiceMuted);
     });
     document.body.appendChild(btn);
+}
+
+
+function ensureChat() {
+    if (!currentRoomId || !currentUser) return;
+    if (chatCleanup) return;
+    chatCleanup = mountChat(document.getElementById("game-screen") || document.body, {
+        roomId: currentRoomId,
+        uid: currentUser.uid,
+        displayName: currentUser.displayName || currentUser.uid.slice(0, 8)
+    });
 }
 
 function showFatalError(error) {

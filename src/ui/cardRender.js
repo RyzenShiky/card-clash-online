@@ -1,6 +1,3 @@
-/**
- * HTML for professional card face
- */
 const CB = { red: "▲", blue: "●", green: "■", yellow: "◆", wild: "✦" };
 
 const LABEL = {
@@ -15,14 +12,28 @@ export function cardLabel(value) {
   return LABEL[value] || String(value);
 }
 
-export function renderCardHTML(card, { discard = false, playable = false } = {}) {
+/**
+ * @param card { id, color, value }
+ * @param opts.discard
+ * @param opts.playable
+ * @param opts.activeColor — override class warna (untuk wild setelah pilih warna)
+ */
+export function renderCardHTML(card, { discard = false, playable = false, activeColor = null } = {}) {
   if (!card) return "";
-  const color = card.color || "wild";
+  const isWild = card.value === "wild" || card.value === "wild_draw4" || !card.color;
+  // Setelah pilih warna, tampilkan warna aktif pada discard wild/+4
+  let colorClass = card.color || "wild";
+  if (isWild && activeColor) {
+    colorClass = `wild ${activeColor}`;
+  } else if (isWild) {
+    colorClass = "wild";
+  }
+
   const val = cardLabel(card.value);
-  const cb = CB[color] || CB.wild;
+  const cb = CB[activeColor || card.color] || CB.wild;
   const cls = [
     "card-face",
-    color,
+    colorClass,
     discard ? "discard" : "",
     playable ? "playable" : ""
   ]
@@ -30,7 +41,7 @@ export function renderCardHTML(card, { discard = false, playable = false } = {})
     .join(" ");
 
   return `
-    <div class="${cls}" data-id="${card.id || ""}" title="${color} ${card.value}">
+    <div class="${cls}" data-id="${card.id || ""}" title="${colorClass} ${card.value}">
       <div class="corner top-left">
         <span>${val}</span>
         <span class="cb-symbol">${cb}</span>

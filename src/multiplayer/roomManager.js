@@ -40,7 +40,7 @@ export async function createRoom(user, settings = {}) {
             allowReconnect: settings.allowReconnect ?? true,
             botFill: settings.botFill ?? false,
             customRules: settings.customRules ?? {
-                drawStacking: true,
+                drawStacking: false,
                 sevenSwap: false,
                 zeroRotation: false,
                 forcePlay: false,
