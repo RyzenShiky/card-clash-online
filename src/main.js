@@ -29,6 +29,13 @@ import { renderLobby, promptJoinCode } from "./ui/lobbyUI.js";
 import { renderGame } from "./ui/gameUI.js";
 import { showNotification } from "./ui/notificationUI.js";
 import { GameManager } from "./game/gameManager.js";
+import {
+    initMatchOnHost,
+    subscribePublic,
+    subscribeHand,
+    playCardOnline,
+    drawCardOnline
+} from "./multiplayer/matchSync.js";
 import { logger } from "./utils/logger.js";
 
 let currentUser = null;
@@ -286,66 +293,111 @@ async function leaveCurrentRoom() {
 }
 
 
+let matchUnsubs = [];
+
+function cleanupMatchSubs() {
+    matchUnsubs.forEach((u) => {
+        try { u(); } catch (_) {}
+    });
+    matchUnsubs = [];
+}
+
 function enterMultiplayerMatch(roomId, room) {
     const playerIds = Object.keys(room.players || {});
+    const isHost = room.meta?.hostId === currentUser.uid;
+
     showScreen("game");
 
-    // Bootstrap lokal: setiap client punya GameManager sendiri (demo).
-    // Production: deck + hands harus server-authoritative (Cloud Functions).
-    if (!soloGame || soloGame._roomId !== roomId) {
-        soloGame = new GameManager({
-            playerIds,
-            isSolo: false
-        });
-        soloGame._roomId = roomId;
-        soloGame.start();
-        showNotification("Match dimulai! (demo sync lokal — Phase 4 full server menyusul)");
-    }
-
-    const publicState = soloGame.getPublicView();
-    const hand = soloGame.getPrivateHand(currentUser.uid);
-
-    renderGame(
-        screens.game(),
-        { publicState, hand, currentUid: currentUser.uid },
-        {
-            onPlayCard: (cardId) => {
-                try {
-                    if (soloGame.turn.currentPlayerId !== currentUser.uid) {
-                        showNotification("Bukan giliranmu");
-                        return;
-                    }
-                    const card = hand.find((c) => c.id === cardId);
-                    let color = null;
-                    if (card && (card.value === "wild" || card.value === "wild_draw4")) {
-                        color = ["red", "blue", "green", "yellow"][Math.floor(Math.random() * 4)];
-                    }
-                    const result = soloGame.playCard(currentUser.uid, cardId, color);
-                    if (result.type === "win") showNotification("Kamu menang!");
-                    enterMultiplayerMatch(roomId, room);
-                } catch (e) {
-                    showNotification(e.message);
-                }
-            },
-            onDraw: () => {
-                try {
-                    if (soloGame.turn.currentPlayerId !== currentUser.uid) {
-                        showNotification("Bukan giliranmu");
-                        return;
-                    }
-                    soloGame.drawCard(currentUser.uid);
-                    enterMultiplayerMatch(roomId, room);
-                } catch (e) {
-                    showNotification(e.message);
-                }
-            },
-            onLastCard: () => showNotification("LAST CARD!"),
-            onQuit: async () => {
-                soloGame = null;
-                await leaveCurrentRoom();
+    // Host deals once into Firebase
+    const boot = async () => {
+        if (isHost) {
+            try {
+                await initMatchOnHost(roomId, playerIds);
+            } catch (e) {
+                logger.error(e);
+                showNotification(e.message || "Gagal init match");
             }
         }
-    );
+
+        cleanupMatchSubs();
+
+        let publicState = null;
+        let hand = [];
+
+        const render = () => {
+            if (!publicState) return;
+            const view = {
+                status: publicState.status,
+                topCard: publicState.topCard,
+                currentColor: publicState.currentColor,
+                currentTurn: publicState.currentTurn,
+                direction: publicState.direction,
+                drawPileCount: publicState.drawPileCount ?? publicState.drawPile?.length ?? 0,
+                players: (publicState.playerIds || playerIds).map((uid) => ({
+                    uid,
+                    handCount: publicState.handCounts?.[uid] ?? 0
+                })),
+                winner: publicState.winner
+            };
+
+            renderGame(
+                screens.game(),
+                { publicState: view, hand, currentUid: currentUser.uid },
+                {
+                    onPlayCard: async (cardId) => {
+                        try {
+                            const card = hand.find((c) => c.id === cardId);
+                            let color = null;
+                            if (card && (card.value === "wild" || card.value === "wild_draw4")) {
+                                color = ["red", "blue", "green", "yellow"][
+                                    Math.floor(Math.random() * 4)
+                                ];
+                            }
+                            await playCardOnline(roomId, currentUser.uid, cardId, color);
+                        } catch (e) {
+                            showNotification(e.message);
+                        }
+                    },
+                    onDraw: async () => {
+                        try {
+                            await drawCardOnline(roomId, currentUser.uid);
+                        } catch (e) {
+                            showNotification(e.message);
+                        }
+                    },
+                    onLastCard: () => showNotification("LAST CARD!"),
+                    onQuit: async () => {
+                        cleanupMatchSubs();
+                        soloGame = null;
+                        await leaveCurrentRoom();
+                    }
+                }
+            );
+
+            if (publicState.winner) {
+                const msg =
+                    publicState.winner === currentUser.uid
+                        ? "Kamu menang!"
+                        : "Pemenang: " + String(publicState.winner).slice(0, 8);
+                showNotification(msg);
+            }
+        };
+
+        matchUnsubs.push(
+            subscribePublic(roomId, (state) => {
+                publicState = state;
+                render();
+            })
+        );
+        matchUnsubs.push(
+            subscribeHand(roomId, currentUser.uid, (h) => {
+                hand = Array.isArray(h) ? h : [];
+                render();
+            })
+        );
+    };
+
+    boot();
 }
 
 function startSolo() {
