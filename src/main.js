@@ -60,7 +60,7 @@ function showScreen(name) {
 }
 
 async function boot() {
-    logger.info("[Boot] Starting...");
+    logger.info("[Boot] Starting... (RoomManager join-v3)");
 
     try {
         // 1) Cek hasil redirect Google (jika sebelumnya popup diblokir)
