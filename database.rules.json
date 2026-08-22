@@ -87,9 +87,18 @@
 
     "rooms": {
       "$roomId": {
-        ".read": "auth != null && (data.child('players').child(auth.uid).exists() || !data.exists())",
+        ".read": "auth != null && (
+          !data.exists() ||
+          data.child('players').child(auth.uid).exists() ||
+          data.child('meta').child('status').val() === 'waiting'
+        )",
 
-        ".write": "auth != null && (!data.exists() || data.child('players').child(auth.uid).exists() || data.child('meta').child('hostId').val() === auth.uid)",
+        ".write": "auth != null && (
+          !data.exists() ||
+          data.child('players').child(auth.uid).exists() ||
+          data.child('meta').child('hostId').val() === auth.uid ||
+          data.child('meta').child('status').val() === 'waiting'
+        )",
 
         "meta": {
           ".validate": "newData.hasChildren(['hostId', 'status'])",
@@ -122,7 +131,12 @@
 
         "players": {
           "$uid": {
-            ".write": "auth != null && (auth.uid === $uid || root.child('rooms').child($roomId).child('meta').child('hostId').val() === auth.uid || !data.exists())",
+            ".write": "auth != null && (
+              auth.uid === $uid ||
+              root.child('rooms').child($roomId).child('meta').child('hostId').val() === auth.uid ||
+              root.child('rooms').child($roomId).child('meta').child('status').val() === 'waiting' ||
+              !data.exists()
+            )",
 
             ".validate": "newData.hasChildren(['uid'])",
 

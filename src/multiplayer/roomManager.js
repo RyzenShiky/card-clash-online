@@ -95,52 +95,67 @@ export async function joinRoomByCode(user, code) {
 
     let outcome = "ok"; // ok | not_found | not_waiting | full | error
 
-    const tx = await runTransaction(roomRef, (room) => {
-        if (room === null) {
-            outcome = "not_found";
-            return; // abort
-        }
+    let tx;
+    try {
+        tx = await runTransaction(roomRef, (room) => {
+            if (room === null) {
+                outcome = "not_found";
+                return; // abort
+            }
 
-        const status = room.meta?.status;
-        if (status !== "waiting") {
-            outcome = "not_waiting";
-            return;
-        }
+            const status = room.meta?.status;
+            if (status !== "waiting") {
+                outcome = "not_waiting";
+                return;
+            }
 
-        const players = room.players || {};
-        const maxPlayers = room.settings?.maxPlayers ?? 4;
-        const playerCount = Object.keys(players).length;
+            const players = room.players || {};
+            const maxPlayers = room.settings?.maxPlayers ?? 4;
+            const playerCount = Object.keys(players).length;
 
-        // Sudah anggota → cukup set connected (reconnect ke lobby)
-        if (players[user.uid]) {
+            // Sudah anggota → cukup set connected (reconnect ke lobby)
+            if (players[user.uid]) {
+                players[user.uid] = {
+                    ...players[user.uid],
+                    connected: true
+                };
+                room.players = players;
+                outcome = "ok";
+                return room;
+            }
+
+            if (playerCount >= maxPlayers) {
+                outcome = "full";
+                return; // abort — room penuh
+            }
+
+            // Tambah pemain baru
             players[user.uid] = {
-                ...players[user.uid],
-                connected: true
+                uid: user.uid,
+                ready: false,
+                connected: true,
+                joinedAt: Date.now()
             };
             room.players = players;
             outcome = "ok";
             return room;
+        });
+    } catch (err) {
+        const code = err?.code || "";
+        if (code === "PERMISSION_DENIED" || /permission/i.test(err?.message || "")) {
+            throw new Error(
+                "Akses room ditolak (Security Rules). Pastikan rules mengizinkan read room berstatus waiting."
+            );
         }
-
-        if (playerCount >= maxPlayers) {
-            outcome = "full";
-            return; // abort — room penuh
-        }
-
-        // Tambah pemain baru
-        players[user.uid] = {
-            uid: user.uid,
-            ready: false,
-            connected: true,
-            joinedAt: Date.now()
-        };
-        room.players = players;
-        outcome = "ok";
-        return room;
-    });
+        throw err;
+    }
 
     if (!tx.committed) {
-        if (outcome === "not_found") throw new Error("Room sudah tidak ada.");
+        if (outcome === "not_found") {
+            throw new Error(
+                "Room sudah tidak ada. (Atau rules memblokir read — publish rules terbaru.)"
+            );
+        }
         if (outcome === "not_waiting") throw new Error("Room sudah dimulai atau ditutup.");
         if (outcome === "full") throw new Error("Room sudah penuh.");
         throw new Error("Gagal bergabung ke room. Coba lagi.");
