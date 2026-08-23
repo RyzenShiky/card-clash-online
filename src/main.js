@@ -370,11 +370,10 @@ function enterLobby(roomId, roomCode) {
 
         const started = room.meta?.searchStartedAt || Date.now();
         const waitLeft = Math.max(0, SEARCH_WAIT_MS - (Date.now() - started));
-        showNotification(
-            waitLeft > 500
-                ? `Mencari lawan… bot dalam ${Math.ceil(waitLeft / 1000)}d`
-                : "Mengisi bot…"
-        );
+        // Ranked: jangan bilang "bot" ke pemain
+        if (waitLeft > 500) {
+            showNotification(`Mencari lawan… ${Math.ceil(waitLeft / 1000)}d`);
+        }
         botFillTimer = setTimeout(async () => {
             botFillTimer = null;
             try {
@@ -616,10 +615,32 @@ function enterMultiplayerMatch(roomId, room) {
 
         let publicState = null;
         let hand = [];
+        let lastRenderKey = "";
 
         const render = () => {
             if (!publicState) return;
             if (listenerManager.activeRoomId !== roomId) return;
+
+            // Skip rebuild jika state visual sama — cegah kartu hilang saat hover di laptop
+            const handIds = (hand || []).map((c) => c.id).join(",");
+            const counts = JSON.stringify(publicState.handCounts || {});
+            const renderKey = [
+                publicState.currentTurn,
+                publicState.currentColor,
+                publicState.topCard?.id,
+                publicState.topCard?.value,
+                publicState.drawPileCount,
+                publicState.stackAmount,
+                publicState.pendingUno,
+                publicState.winner,
+                publicState.status,
+                publicState.challenge?.type || "",
+                counts,
+                handIds,
+                myTurnFlag(publicState)
+            ].join("|");
+            if (renderKey === lastRenderKey) return;
+            lastRenderKey = renderKey;
 
             // Merge reconnect status from room.players into view
             const roomPlayers = room.players || {};
@@ -635,9 +656,15 @@ function enterMultiplayerMatch(roomId, room) {
                     0,
                 players: (publicState.playerIds || playerIds).map((uid) => ({
                     uid,
+                    displayName:
+                        roomPlayers[uid]?.displayName ||
+                        (String(uid).startsWith("bot-")
+                            ? "Pemain"
+                            : String(uid).slice(0, 8)),
                     handCount: publicState.handCounts?.[uid] ?? 0,
                     connected: roomPlayers[uid]?.connected !== false,
-                    status: roomPlayers[uid]?.status || "active"
+                    status: roomPlayers[uid]?.status || "active",
+                    isBot: !!roomPlayers[uid]?.isBot
                 })),
                 winner: publicState.winner,
                 scores: publicState.scores,
@@ -775,14 +802,18 @@ function enterMultiplayerMatch(roomId, room) {
             }
         };
 
-        // Debounce UI render — cegah kartu kedip saat tab blur / reconnect burst
+        function myTurnFlag(state) {
+            return state?.currentTurn === currentUser.uid ? "1" : "0";
+        }
+
+        // Debounce UI render — cegah kartu kedip saat hover / reconnect
         let renderTimer = null;
         const scheduleRender = () => {
             if (renderTimer) clearTimeout(renderTimer);
             renderTimer = setTimeout(() => {
                 renderTimer = null;
                 render();
-            }, 40);
+            }, 50);
         };
 
         const unsubPublic = subscribePublic(roomId, (state) => {
@@ -802,24 +833,49 @@ function enterMultiplayerMatch(roomId, room) {
                 sfx.draw();
             }
             scheduleRender();
+            resyncHandIfNeeded(state);
             runOnlineBotIfNeeded(state);
         });
         const unsubHand = subscribeHand(roomId, currentUser.uid, (h) => {
             if (listenerManager.activeRoomId !== roomId) return;
-            // Jangan kosongkan hand jika update transient null/[] padahal kita sudah punya kartu
-            // (umum di laptop saat tab sleep → Firebase reconnect)
-            if (Array.isArray(h) && h.length > 0) {
-                hand = h;
-            } else if (Array.isArray(h) && h.length === 0 && publicState?.handCounts?.[currentUser.uid] === 0) {
-                hand = [];
-            } else if (!Array.isArray(h) || h.length === 0) {
-                // keep previous hand until confirmed empty by handCounts
-                if ((publicState?.handCounts?.[currentUser.uid] ?? 99) === 0) {
-                    hand = [];
+            if (Array.isArray(h)) {
+                // Terima hand dari server; jangan buang data valid
+                if (h.length > 0) {
+                    hand = h;
+                } else {
+                    // Hanya kosongkan jika handCounts juga 0 (benar-benar habis)
+                    const cnt = publicState?.handCounts?.[currentUser.uid];
+                    if (cnt === 0 || cnt === undefined) {
+                        // cnt undefined = belum ada public state; jangan hapus hand lama
+                        if (cnt === 0) hand = [];
+                    }
                 }
             }
             scheduleRender();
         });
+
+        // Jika public bilang punya N kartu tapi hand lokal kosong → fetch sekali
+        async function resyncHandIfNeeded(state) {
+            const expected = state?.handCounts?.[currentUser.uid];
+            if (expected == null || expected <= 0) return;
+            if ((hand || []).length >= expected) return;
+            try {
+                const { get, ref } = await import(
+                    "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js"
+                );
+                const { database } = await import("./firebase/services.js");
+                const snap = await get(
+                    ref(database, `rooms/${roomId}/hands/${currentUser.uid}`)
+                );
+                if (snap.exists() && Array.isArray(snap.val()) && snap.val().length) {
+                    hand = snap.val();
+                    scheduleRender();
+                    logger.info("[Hand] resync", hand.length);
+                }
+            } catch (e) {
+                logger.warn("[Hand] resync failed:", e.message);
+            }
+        }
         matchUnsubs.push(unsubPublic, unsubHand);
         listenerManager.add(matchKey, unsubPublic);
         listenerManager.add(matchKey, unsubHand);

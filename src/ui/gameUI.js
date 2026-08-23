@@ -5,6 +5,14 @@ import { bindCardGestures } from "./cardTouch.js";
 import { renderCardHTML } from "./cardRender.js";
 import { canPlayCard } from "../game/rules.js";
 
+function escapeHtml(s) {
+    return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
 export function renderGame(container, { publicState, hand, currentUid }, handlers = {}) {
     const top = publicState?.topCard;
     const myTurn = publicState?.currentTurn === currentUid;
@@ -18,11 +26,13 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
 
     const opponents = (publicState?.players || []).filter((p) => p.uid !== currentUid);
 
+    const nameOf = (uid) => {
+        if (uid === currentUid) return "You";
+        const p = (publicState?.players || []).find((x) => x.uid === uid);
+        return p?.displayName || String(uid).slice(0, 8);
+    };
     const scoreLine = Object.entries(scores)
-        .map(([uid, s]) => {
-            const label = uid === currentUid ? "You" : uid.slice(0, 6);
-            return `${label}: ${s}`;
-        })
+        .map(([uid, s]) => `${nameOf(uid)}: ${s}`)
         .join(" · ");
 
     // Discard shows chosen color for wild
@@ -38,7 +48,7 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
           <div class="game-main">
             <div class="lobby-header">
                 <span class="text-muted">
-                    Turn: ${myTurn ? "<b>YOU</b>" : (publicState?.currentTurn || "—").slice(0, 6)}
+                    Turn: ${myTurn ? "<b>YOU</b>" : (() => { const u = publicState?.currentTurn; const p = (publicState?.players||[]).find(x=>x.uid===u); return escapeHtml(p?.displayName || String(u||"—").slice(0,8)); })()}
                     <span class="turn-dir ${dir}"></span>
                 </span>
                 <button class="btn btn-secondary" id="btn-quit" style="max-width:72px;padding:0.5rem">Quit</button>
@@ -54,9 +64,12 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
                                 p.status === "reconnecting" || p.connected === false
                                     ? " · 🔄"
                                     : "";
+                            const label =
+                                p.displayName ||
+                                (p.uid === currentUid ? "You" : String(p.uid).slice(0, 8));
                             return `
                     <div class="opponent-chip ${p.uid === publicState?.currentTurn ? "active-turn" : ""} ${p.status === "reconnecting" ? "reconnecting" : ""}">
-                        ${p.uid.slice(0, 6)}… · 🂠 ${p.handCount ?? "?"}${recon}
+                        ${escapeHtml(label)} · 🂠 ${p.handCount ?? "?"}${recon}
                         ${
                             publicState?.handCounts?.[p.uid] === 1
                                 ? `<button class="btn btn-danger btn-cek-uno" data-challenge-uno="${p.uid}">Cek UNO</button>`
@@ -114,26 +127,36 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
             </div>
 
             <p class="mobile-play-hint">Tap · geser ke atas · atau tarik ke kartu tengah</p>
-            <div class="hand-fan" id="player-hand">
-                ${(hand || [])
-                    .map((c) => {
-                        const stackBlock = stackAmt > 0 && publicState?.stacking;
-                        const playable =
-                            myTurn &&
-                            !stackBlock &&
-                            canPlayCard(c, top, publicState?.currentColor);
-                        const stackPlayable =
-                            myTurn &&
-                            stackBlock &&
-                            ((publicState.stackType === "draw2" && c.value === "draw2") ||
-                                (publicState.stackType === "wild_draw4" &&
-                                    c.value === "wild_draw4"));
-                        return renderCardHTML(c, {
-                            playable: playable || stackPlayable
-                        });
-                    })
-                    .join("")}
-            </div>
+            <div class="hand-fan" id="player-hand"><div class="hand-fan-scroll">
+                ${
+                    !(hand || []).length
+                        ? `<p class="hand-loading">${
+                              (publicState?.handCounts?.[currentUid] || 0) > 0
+                                  ? "Memuat kartu…"
+                                  : "Tidak ada kartu"
+                          }</p>`
+                        : (hand || [])
+                              .map((c) => {
+                                  const stackBlock =
+                                      stackAmt > 0 && publicState?.stacking;
+                                  const playable =
+                                      myTurn &&
+                                      !stackBlock &&
+                                      canPlayCard(c, top, publicState?.currentColor);
+                                  const stackPlayable =
+                                      myTurn &&
+                                      stackBlock &&
+                                      ((publicState.stackType === "draw2" &&
+                                          c.value === "draw2") ||
+                                          (publicState.stackType === "wild_draw4" &&
+                                              c.value === "wild_draw4"));
+                                  return renderCardHTML(c, {
+                                      playable: playable || stackPlayable
+                                  });
+                              })
+                              .join("")
+                }
+            </div></div>
 
             <div class="game-actions">
                 <button class="btn btn-secondary" id="btn-draw" ${myTurn ? "" : "disabled"}>DRAW</button>

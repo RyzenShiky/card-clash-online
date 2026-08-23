@@ -30,7 +30,7 @@ const QUEUE_CASUAL = "matchmaking/casual";
 const QUEUE_RANKED = "matchmaking/ranked";
 
 /** Tunggu pemain manusia sebelum isi bot */
-export const SEARCH_WAIT_MS = 10_000;
+export const SEARCH_WAIT_MS = 6_000;
 
 const BOT_NAMES = [
     "Andi", "Budi", "Citra", "Dewi", "Eko", "Fajar", "Gita", "Hana",
