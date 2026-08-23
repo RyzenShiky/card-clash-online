@@ -1,5 +1,6 @@
 /**
- * Main Menu UI
+ * Menu — HANYA 1 tombol Ranked (di menu utama), berfungsi.
+ * Online menu = casual room saja (tanpa Ranked duplikat).
  */
 export function renderMenu(container, handlers = {}) {
     container.innerHTML = `
@@ -9,7 +10,7 @@ export function renderMenu(container, handlers = {}) {
         <div class="menu-actions">
             <button class="btn btn-primary" id="btn-solo">PLAY SOLO</button>
             <button class="btn btn-accent" id="btn-ranked-main">RANKED</button>
-            <button class="btn btn-secondary" id="btn-online">PLAY ONLINE</button>
+            <button class="btn btn-secondary" id="btn-online">ROOM / CASUAL</button>
         </div>
 
         <div class="menu-footer">
@@ -18,7 +19,7 @@ export function renderMenu(container, handlers = {}) {
             <button class="btn btn-secondary" id="btn-settings">Settings</button>
         </div>
         <p class="text-muted" style="margin-top:0.75rem;font-size:0.75rem;text-align:center;opacity:0.8">
-          Ranked: Warrior → Legend · max 4 pemain
+          Ranked 6 pemain · antrean → Ready → main · Card-Elo
         </p>
     `;
 
@@ -34,11 +35,10 @@ export function renderOnlineMenu(container, handlers = {}) {
     container.innerHTML = `
         <div class="lobby-header">
             <button class="btn btn-secondary" id="btn-back" style="max-width:100px">← Back</button>
-            <span class="text-muted">Multiplayer</span>
+            <span class="text-muted">Casual / Room</span>
         </div>
 
         <div class="menu-actions" style="margin-top:1.5rem">
-            <button class="btn btn-accent" id="btn-ranked">RANKED</button>
             <button class="btn btn-primary" id="btn-quick">QUICK MATCH</button>
             <button class="btn btn-secondary" id="btn-create">CREATE ROOM</button>
             <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
@@ -46,13 +46,12 @@ export function renderOnlineMenu(container, handlers = {}) {
             <button class="btn btn-secondary" id="btn-leaderboard">LEADERBOARD</button>
         </div>
         <p class="text-muted" style="margin-top:1rem;font-size:0.8rem;text-align:center">
-          Ranked: max 4 · bot fill jika sepi · Warrior → Legend
+          Ranked hanya di menu utama (1 tombol). Di sini room privat & casual.
         </p>
     `;
 
     container.querySelector("#btn-back")?.addEventListener("click", () => handlers.onBack?.());
     container.querySelector("#btn-quick")?.addEventListener("click", () => handlers.onQuick?.());
-    container.querySelector("#btn-ranked")?.addEventListener("click", () => handlers.onRanked?.());
     container.querySelector("#btn-create")?.addEventListener("click", () => handlers.onCreate?.());
     container.querySelector("#btn-join")?.addEventListener("click", () => handlers.onJoin?.());
     container.querySelector("#btn-rules")?.addEventListener("click", () => handlers.onRules?.());

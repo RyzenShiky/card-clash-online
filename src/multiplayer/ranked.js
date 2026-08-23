@@ -1,13 +1,18 @@
 /**
- * Ranked system — tiers + MMR
+ * Card-Elo ranked system
  * Warrior → Athletic → Professional → Gold → Platinum → Master → GrandMaster → Legend
+ *
+ * Elo disesuaikan:
+ * - skill rating (MMR)
+ * - form 5 match terakhir (win streak / recent)
+ * - jumlah pemain di meja (4 vs 6)
+ * - bot mendapat MMR sedikit di atas rata-rata manusia agar kompetitif
  */
 import {
     ref,
     get,
     update,
     set,
-    increment,
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 import { database } from "../firebase/services.js";
@@ -25,7 +30,8 @@ export const RANK_TIERS = [
 ];
 
 export const DEFAULT_MMR = 1000;
-export const RANKED_MAX_PLAYERS = 4;
+/** Ranked penuh = 6 kursi */
+export const RANKED_MAX_PLAYERS = 6;
 
 export function tierFromMmr(mmr) {
     const m = Math.max(0, Number(mmr) || 0);
@@ -40,9 +46,6 @@ export function rankLabel(mmr) {
     return `${t.name} (${Math.round(mmr)})`;
 }
 
-/**
- * Ensure ranked fields exist on player profile.
- */
 export async function ensureRankedProfile(uid) {
     const r = ref(database, `players/${uid}/ranked`);
     const snap = await get(r);
@@ -53,6 +56,7 @@ export async function ensureRankedProfile(uid) {
         rankedWins: 0,
         rankedLosses: 0,
         rankedMatches: 0,
+        recent: [], // 1 win / 0 loss, max 10
         season: 1,
         updatedAt: serverTimestamp()
     };
@@ -67,35 +71,67 @@ export async function getRankedProfile(uid) {
 }
 
 /**
- * Simple Elo-like update after ranked match.
- * @param {string[]} playerIds
- * @param {string} winnerUid
+ * Effective rating = MMR + form bonus dari 5 match terakhir.
+ */
+export function effectiveRating(profile) {
+    const mmr = profile?.mmr ?? DEFAULT_MMR;
+    const recent = Array.isArray(profile?.recent) ? profile.recent.slice(-5) : [];
+    if (!recent.length) return mmr;
+    const wins = recent.filter((x) => x === 1).length;
+    const form = (wins / recent.length - 0.5) * 80; // ±40
+    return mmr + form;
+}
+
+/**
+ * K-factor: lebih tinggi di rank rendah, lebih rendah di Legend.
+ * Meja 6 → K sedikit lebih kecil (lebih stabil).
+ */
+function kFactor(mmr, tableSize) {
+    let k = 32;
+    if (mmr < 1000) k = 40;
+    else if (mmr >= 1800) k = 24;
+    else if (mmr >= 1400) k = 28;
+    if (tableSize >= 6) k = Math.round(k * 0.85);
+    else if (tableSize <= 4) k = Math.round(k * 1.05);
+    return k;
+}
+
+/**
+ * Card-Elo multiplayer: setiap human vs rata-rata effective rating lawan.
  */
 export async function applyRankedResult(playerIds, winnerUid) {
-    const K = 32;
+    const humanIds = (playerIds || []).filter((id) => !String(id).startsWith("bot-"));
+    if (!humanIds.length) return;
+
     const profiles = {};
-    for (const id of playerIds) {
-        if (String(id).startsWith("bot-")) continue;
+    for (const id of humanIds) {
         profiles[id] = await getRankedProfile(id);
     }
 
-    const humanIds = Object.keys(profiles);
-    if (!humanIds.length) return;
-
-    const avgOpp = (uid) => {
-        const others = humanIds.filter((x) => x !== uid);
-        if (!others.length) return DEFAULT_MMR;
-        return others.reduce((s, x) => s + (profiles[x].mmr || DEFAULT_MMR), 0) / others.length;
-    };
+    const tableSize = (playerIds || []).length || humanIds.length;
+    const ratings = {};
+    for (const id of humanIds) {
+        ratings[id] = effectiveRating(profiles[id]);
+    }
 
     for (const uid of humanIds) {
+        const others = humanIds.filter((x) => x !== uid);
+        const oppAvg =
+            others.length > 0
+                ? others.reduce((s, x) => s + ratings[x], 0) / others.length
+                : DEFAULT_MMR;
+
         const mmr = profiles[uid].mmr || DEFAULT_MMR;
-        const opp = avgOpp(uid);
-        const expected = 1 / (1 + Math.pow(10, (opp - mmr) / 400));
+        const expected = 1 / (1 + Math.pow(10, (oppAvg - ratings[uid]) / 400));
         const score = uid === winnerUid ? 1 : 0;
+        const K = kFactor(mmr, tableSize);
         const delta = Math.round(K * (score - expected));
         const next = Math.max(0, mmr + delta);
         const tier = tierFromMmr(next).id;
+
+        const recent = Array.isArray(profiles[uid].recent)
+            ? [...profiles[uid].recent, score].slice(-10)
+            : [score];
 
         await update(ref(database, `players/${uid}/ranked`), {
             mmr: next,
@@ -103,10 +139,10 @@ export async function applyRankedResult(playerIds, winnerUid) {
             rankedWins: (profiles[uid].rankedWins || 0) + (score ? 1 : 0),
             rankedLosses: (profiles[uid].rankedLosses || 0) + (score ? 0 : 1),
             rankedMatches: (profiles[uid].rankedMatches || 0) + 1,
+            recent,
             updatedAt: serverTimestamp()
         });
 
-        // Leaderboard entry
         try {
             const pub = (await get(ref(database, `players/${uid}/public`))).val() || {};
             await set(ref(database, `leaderboard/wins/${uid}`), {
@@ -118,9 +154,40 @@ export async function applyRankedResult(playerIds, winnerUid) {
                 updatedAt: Date.now()
             });
         } catch (e) {
-            logger.warn("[Ranked] leaderboard write:", e.message);
+            logger.warn("[Ranked] leaderboard:", e.message);
         }
     }
 
-    logger.info("[Ranked] Applied result, winner:", winnerUid);
+    logger.info("[Card-Elo] Applied, winner:", winnerUid, "table:", tableSize);
+}
+
+/**
+ * Rata-rata MMR manusia di room → bot skill target (sedikit di atas).
+ */
+export async function averageHumanMmr(playerMap) {
+    const humans = Object.values(playerMap || {}).filter((p) => p && !p.isBot);
+    if (!humans.length) return DEFAULT_MMR + 50;
+    let sum = 0;
+    let n = 0;
+    for (const p of humans) {
+        try {
+            const r = await getRankedProfile(p.uid);
+            sum += r.mmr || DEFAULT_MMR;
+            n++;
+        } catch (_) {
+            sum += DEFAULT_MMR;
+            n++;
+        }
+    }
+    return n ? sum / n : DEFAULT_MMR;
+}
+
+/**
+ * Map MMR → bot difficulty + think style.
+ */
+export function botDifficultyFromMmr(botMmr, humanAvg) {
+    const diff = (botMmr || humanAvg) - (humanAvg || DEFAULT_MMR);
+    if (diff >= 80) return "hard";
+    if (diff <= -40) return "easy";
+    return "normal";
 }

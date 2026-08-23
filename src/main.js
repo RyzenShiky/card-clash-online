@@ -29,10 +29,18 @@ import {
     subscribeRoom,
     startMatch
 } from "./multiplayer/roomManager.js";
-import { findQuickMatch, fillBots, clearFromQueue } from "./multiplayer/matchmaking.js";
+import {
+    findQuickMatch,
+    fillBots,
+    clearFromQueue,
+    maybeFillBotsAfterSearch,
+    allHumansReady,
+    isLobbyFull,
+    SEARCH_WAIT_MS
+} from "./multiplayer/matchmaking.js";
 import { applyRankedResult, ensureRankedProfile } from "./multiplayer/ranked.js";
 import { logEvent, logMatchStart, logMatchEnd } from "./multiplayer/matchReplay.js";
-import { chooseBotAction } from "./game/botAI.js";
+import { chooseBotAction, botThinkMs } from "./game/botAI.js";
 import { showAuthScreen, hideAuthScreen } from "./ui/authUI.js";
 import { renderMenu, renderOnlineMenu } from "./ui/menuUI.js";
 import { renderLobby, promptJoinCode } from "./ui/lobbyUI.js";
@@ -204,8 +212,13 @@ function startApplication() {
     showScreen("menu");
     renderMenu(screens.menu(), {
         onSolo: startSolo,
+        onRanked: () => handleMatchmaking("ranked"),
         onOnline: showOnlineMenu,
         onProfile: showProfileInfo,
+        onLeaderboard: async () => {
+            const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
+            openLeaderboardModal();
+        },
         onSettings: () => {
             document.body.classList.toggle("colorblind-on");
             const on = document.body.classList.contains("colorblind-on");
@@ -236,7 +249,6 @@ function showOnlineMenu() {
     renderOnlineMenu(screens.menu(), {
         onBack: startApplication,
         onQuick: () => handleMatchmaking("casual"),
-        onRanked: () => handleMatchmaking("ranked"),
         onCreate: handleCreateRoom,
         onJoin: handleJoinRoom,
         onRules: async () => {
@@ -244,7 +256,7 @@ function showOnlineMenu() {
             const rules = await openRulesCreator(currentUser);
             if (rules) {
                 pendingCustomRules = rules;
-                showNotification("Rules siap dipakai saat Create / Ranked");
+                showNotification("Rules siap dipakai saat Create Room");
             }
         },
         onLeaderboard: async () => {
@@ -257,11 +269,15 @@ function showOnlineMenu() {
 async function handleMatchmaking(mode) {
     if (!currentUser) return;
     try {
-        showNotification(mode === "ranked" ? "Mencari Ranked…" : "Quick Match…");
+        showNotification(
+            mode === "ranked"
+                ? "Ranked: mencari antrean (6 pemain)…"
+                : "Quick Match…"
+        );
         if (mode === "ranked") await ensureRankedProfile(currentUser.uid);
         const opts = {
             mode,
-            maxPlayers: 4,
+            maxPlayers: mode === "ranked" ? 6 : 4,
             botFill: true,
             customRules: pendingCustomRules || undefined
         };
@@ -323,18 +339,76 @@ async function handleJoinRoom() {
     }
 }
 
+let matchEntryLock = false;
+let botFillTimer = null;
+let autoStartLock = false;
+
 function enterLobby(roomId, roomCode) {
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
     }
     cleanupMatchSubs();
+    matchEntryLock = false;
+    autoStartLock = false;
+    if (botFillTimer) {
+        clearTimeout(botFillTimer);
+        botFillTimer = null;
+    }
     const gen = listenerManager.setActiveRoom(roomId);
 
     showScreen("lobby");
+    markConnected(currentRoomId || roomId, currentUser.uid).catch(() => {});
 
-    // Restore connection flag when entering/re-entering lobby
-    markConnected(roomId, currentUser.uid).catch(() => {});
+    // Ranked/queue: host auto-isi bot setelah SEARCH_WAIT jika masih sepi
+    const scheduleBotFill = (room) => {
+        const isHost = room.meta?.hostId === currentUser.uid;
+        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
+        if (!isHost || !isQueue || room.meta?.status !== "waiting") return;
+        if (isLobbyFull(room)) return;
+        if (botFillTimer) return;
+
+        const started = room.meta?.searchStartedAt || Date.now();
+        const waitLeft = Math.max(0, SEARCH_WAIT_MS - (Date.now() - started));
+        showNotification(
+            waitLeft > 500
+                ? `Mencari lawan… bot dalam ${Math.ceil(waitLeft / 1000)}d`
+                : "Mengisi bot…"
+        );
+        botFillTimer = setTimeout(async () => {
+            botFillTimer = null;
+            try {
+                await maybeFillBotsAfterSearch(roomId, currentUser.uid, {
+                    targetCount:
+                        room.settings?.maxPlayers ??
+                        (room.meta?.mode === "ranked" ? 6 : 4)
+                });
+            } catch (e) {
+                logger.warn("[Queue] bot fill:", e.message);
+            }
+        }, waitLeft || 400);
+    };
+
+    const tryAutoStart = async (room) => {
+        const isHost = room.meta?.hostId === currentUser.uid;
+        if (!isHost || room.meta?.status !== "waiting") return;
+        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
+        if (!isQueue && !room.settings?.autoStart) return;
+        if (!isLobbyFull(room)) return;
+        if (!allHumansReady(room)) return;
+        if (autoStartLock) return;
+        autoStartLock = true;
+        try {
+            showNotification("Semua siap — memulai…");
+            const mode = room.meta?.mode || currentMatchMode || "casual";
+            await clearFromQueue(roomId, mode);
+            await startMatch(roomId, currentUser.uid);
+        } catch (e) {
+            autoStartLock = false;
+            showNotification(e.message || "Gagal auto-start");
+            logger.error(e);
+        }
+    };
 
     roomUnsubscribe = subscribeRoom(roomId, (room) => {
         if (!listenerManager.isCurrent(roomId, gen) && listenerManager.activeRoomId !== roomId) {
@@ -346,20 +420,24 @@ function enterLobby(roomId, roomCode) {
             return;
         }
 
-        // Match started → masuk game screen multiplayer (shared lobby game)
         if (room.meta?.status === "playing") {
             enterMultiplayerMatch(roomId, room);
             return;
         }
 
+        scheduleBotFill(room);
+        tryAutoStart(room);
+
         const isHost = room.meta?.hostId === currentUser.uid;
+        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
         renderLobby(
             screens.lobby(),
             {
                 roomCode,
                 room,
                 currentUid: currentUser.uid,
-                isHost
+                isHost,
+                queueMode: isQueue
             },
             {
                 onLeave: leaveCurrentRoom,
@@ -369,7 +447,7 @@ function enterLobby(roomId, roomCode) {
                 },
                 onStart: async () => {
                     try {
-                        showNotification("Memulai pertandingan...");
+                        showNotification("Memulai…");
                         const mode = room.meta?.mode || currentMatchMode || "casual";
                         await clearFromQueue(roomId, mode);
                         await startMatch(roomId, currentUser.uid);
@@ -380,7 +458,6 @@ function enterLobby(roomId, roomCode) {
                 },
                 onFillBots: async () => {
                     try {
-                        showNotification("Mengisi bot…");
                         await fillBots(roomId, currentUser.uid, room.settings?.maxPlayers ?? 4);
                         showNotification("Bot ditambahkan");
                     } catch (e) {
@@ -440,15 +517,25 @@ function cleanupMatchSubs() {
 }
 
 function enterMultiplayerMatch(roomId, room) {
+    // Cegah double-entry (subscribe room bisa fire 2x) — ini yang bikin Agora/start gantung
+    if (matchEntryLock) {
+        logger.info("[Match] already entering, skip duplicate");
+        return;
+    }
+    matchEntryLock = true;
+
     const playerIds = Object.keys(room.players || {});
     const isHost = room.meta?.hostId === currentUser.uid;
 
     showScreen("game");
 
-    // Voice optional
+    // Voice WebRTC — non-blocking, timeout di dalam joinVoiceChannel
     if (isVoiceAvailable()) {
-        joinVoiceChannel(roomId, currentUser.uid);
-        ensureMicButton();
+        joinVoiceChannel(roomId, currentUser.uid)
+            .then((ok) => {
+                if (ok) ensureMicButton();
+            })
+            .catch(() => {});
     }
 
     const ensureChat = () => {
@@ -488,16 +575,15 @@ function enterMultiplayerMatch(roomId, room) {
             const turn = state.currentTurn;
             if (!turn || !String(turn).startsWith("bot-")) return;
             if (botTimer) return;
+            const botMeta = room.players?.[turn] || {};
+            const diff = botMeta.botDifficulty || "normal";
             botTimer = setTimeout(async () => {
                 botTimer = null;
                 try {
-                    const { get } = await import(
+                    const { get, ref } = await import(
                         "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js"
                     );
                     const { database } = await import("./firebase/services.js");
-                    const { ref } = await import(
-                        "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js"
-                    );
                     const handSnap = await get(
                         ref(database, `rooms/${roomId}/hands/${turn}`)
                     );
@@ -506,7 +592,7 @@ function enterMultiplayerMatch(roomId, room) {
                         botHand,
                         state.topCard,
                         state.currentColor,
-                        "normal"
+                        diff
                     );
                     if (action.type === "play") {
                         await playCardOnline(roomId, turn, action.cardId, action.color);
@@ -522,11 +608,10 @@ function enterMultiplayerMatch(roomId, room) {
                 } catch (e) {
                     logger.warn("[Bot] turn failed:", e.message);
                 }
-            }, 700);
+            }, botThinkMs(diff));
         };
 
         cleanupMatchSubs();
-        const matchGen = listenerManager.generation;
         const matchKey = `match:${roomId}`;
 
         let publicState = null;
