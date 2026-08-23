@@ -44,7 +44,7 @@ import { chooseBotAction, botThinkMs } from "./game/botAI.js";
 import { showAuthScreen, hideAuthScreen } from "./ui/authUI.js";
 import { renderMenu, renderOnlineMenu } from "./ui/menuUI.js";
 import { renderLobby, promptJoinCode } from "./ui/lobbyUI.js";
-import { renderGame } from "./ui/gameUI.js";
+import { renderGame, destroyGameUI } from "./ui/gameUI.js";
 import { showNotification } from "./ui/notificationUI.js";
 import { GameManager } from "./game/gameManager.js";
 import {
@@ -483,6 +483,7 @@ async function leaveCurrentRoom() {
     try { await leaveVoiceChannel(); } catch (_) {}
     document.getElementById("btn-mic")?.remove();
     cleanupMatchSubs();
+    try { destroyGameUI(screens.game()); } catch (_) {}
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
@@ -504,6 +505,7 @@ async function leaveCurrentRoom() {
 let matchUnsubs = [];
 
 function cleanupMatchSubs() {
+    try { destroyGameUI(screens.game()); } catch (_) {}
     matchUnsubs.forEach((u) => {
         try {
             u();

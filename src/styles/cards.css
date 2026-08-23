@@ -352,3 +352,41 @@ body.xray-on .opponent-chip {
     margin-left: -14px;
   }
 }
+
+
+/* CardSlot = hitbox tetap; CardVisual = animasi hover */
+.card-slot {
+  position: relative;
+  flex-shrink: 0;
+  width: var(--card-w, 72px);
+  height: var(--card-h, 102px);
+  margin-left: -16px;
+  cursor: pointer;
+  /* Hitbox TIDAK pernah bergerak */
+  transform: none !important;
+}
+.hand-fan-scroll > .card-slot:first-child {
+  margin-left: 0;
+}
+.card-slot .card-face,
+.card-slot .card-visual-face {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  pointer-events: none;
+  transform-origin: center bottom;
+}
+.card-slot.is-hovered .card-face,
+.card-slot.is-hovered .card-visual-face,
+.card-slot:hover .card-face,
+.card-slot:hover .card-visual-face {
+  transform: translateY(-12px) scale(1.06);
+  z-index: 30;
+}
+.card-slot .card-face.playable {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 12px 3px rgba(255, 214, 0, 0.7),
+    0 6px 14px rgba(0, 0, 0, 0.35);
+}
