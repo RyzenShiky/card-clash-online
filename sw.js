@@ -1,5 +1,5 @@
-/* Card Clash — network-first for JS modules (hindari stale / CONNECTION_RESET palsu) */
-const CACHE = "card-clash-v3";
+/* Card Clash SW v5 — jangan kembalikan 503 palsu untuk modul JS */
+const CACHE = "card-clash-v5";
 const ASSETS = ["./", "./index.html", "./src/styles/main.css", "./favicon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -21,15 +21,13 @@ function isBypass(url) {
     url.includes("firebase") ||
     url.includes("googleapis") ||
     url.includes("gstatic") ||
-    url.includes("agora.io") ||
     url.includes("agora")
   );
 }
 
-function isModuleOrScript(req, url) {
-  const dest = req.destination;
-  if (dest === "script" || dest === "worker") return true;
-  if (url.includes("/src/") && (url.endsWith(".js") || url.includes(".js?"))) return true;
+function isJsModule(req, url) {
+  if (req.destination === "script" || req.destination === "worker") return true;
+  if (url.includes("/src/") && (url.includes(".js"))) return true;
   return false;
 }
 
@@ -40,8 +38,8 @@ self.addEventListener("fetch", (e) => {
   const url = req.url;
   if (isBypass(url)) return;
 
-  // JS modules: always network-first (jangan sajikan cache busuk)
-  if (isModuleOrScript(req, url)) {
+  // Modul JS: network saja. Gagal → coba cache. JANGAN buat Response 503.
+  if (isJsModule(req, url)) {
     e.respondWith(
       fetch(req)
         .then((res) => {
@@ -54,16 +52,13 @@ self.addEventListener("fetch", (e) => {
         .catch(async () => {
           const cached = await caches.match(req);
           if (cached) return cached;
-          return new Response("// offline: module unavailable", {
-            status: 503,
-            headers: { "Content-Type": "application/javascript" }
-          });
+          // Biarkan browser error natural (bukan 503 dari SW)
+          return fetch(req);
         })
     );
     return;
   }
 
-  // Lainnya: cache fallback
   e.respondWith(
     fetch(req)
       .then((res) => {
@@ -73,6 +68,8 @@ self.addEventListener("fetch", (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+      .catch(() =>
+        caches.match(req).then((c) => c || caches.match("./index.html"))
+      )
   );
 });

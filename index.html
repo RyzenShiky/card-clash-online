@@ -17,13 +17,45 @@
         <div id="lobby-screen" class="screen hidden"></div>
         <div id="game-screen" class="screen hidden"></div>
     </div>
-    <script type="module" src="./src/main.js?v=4"></script>
+
+    <script type="module" src="./src/main.js?v=5"></script>
     <script>
+      // Bersihkan SW lama yang bisa mengembalikan 503
       if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register("./sw.js?v=4").catch(() => {});
+        window.addEventListener("load", async () => {
+          try {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (const r of regs) {
+              // Unregister semua dulu jika versi lama bermasalah, lalu register baru
+              await r.unregister();
+            }
+            // Optional: aktifkan SW baru (boleh di-skip untuk dev)
+            // await navigator.serviceWorker.register("./sw.js?v=5");
+          } catch (_) {}
         });
       }
+
+      window.addEventListener("error", (ev) => {
+        const src = String(ev.filename || "");
+        const msg = String(ev.message || "");
+        if (src.includes("/src/") || msg.includes("Failed to fetch") || msg.includes("503")) {
+          const el = document.getElementById("loading-screen");
+          if (el) {
+            el.innerHTML =
+              "<p style='color:#fff;max-width:340px;text-align:center;padding:1rem;line-height:1.5'>" +
+              "<b>Gagal memuat (503 / server)</b><br><br>" +
+              "1. Pastikan server lokal masih jalan<br>" +
+              "   <code style='font-size:0.75rem'>python -m http.server 8000</code><br><br>" +
+              "2. Hard refresh: Ctrl+Shift+R<br><br>" +
+              "3. DevTools → Application → Service Workers → Unregister<br>" +
+              "   lalu Application → Clear storage → Clear site data<br><br>" +
+              "4. Buka lagi http://localhost:8000" +
+              "</p>";
+            el.classList.remove("hidden");
+            el.style.display = "flex";
+          }
+        }
+      }, true);
     </script>
 </body>
 </html>
