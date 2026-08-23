@@ -726,8 +726,10 @@ function enterMultiplayerMatch(roomId, room) {
                     isBot: !!roomPlayers[uid]?.isBot
                 })),
                 winner: publicState.winner,
-                publicState.placements?.length,
-                publicState.status,
+                placements: publicState.placements || [],
+                finishedPlayers: publicState.finishedPlayers || {},
+                spectators: publicState.spectators || {},
+                results: publicState.results || null,
                 scores: publicState.scores,
                 targetScore: publicState.targetScore,
                 challenge: publicState.challenge,

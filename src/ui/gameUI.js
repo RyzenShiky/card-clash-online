@@ -218,12 +218,15 @@ function patchChrome(container, publicState, currentUid, hand, handlers) {
     }
 
     const btnDraw = container.querySelector("#btn-draw");
-    if (btnDraw) const iFinished = !!publicState?.finishedPlayers?.[currentUid];
-    if (btnDraw) btnDraw.disabled = !myTurn || iFinished;
-    const handCount = hand?.length ?? 0;
+    const iFinished = !!(publicState && publicState.finishedPlayers && publicState.finishedPlayers[currentUid]);
+    if (btnDraw) {
+        btnDraw.disabled = !myTurn || iFinished;
+    }
+    const handCount = (hand && hand.length) || 0;
     const btnUno = container.querySelector("#btn-uno");
     if (btnUno) {
-        btnUno.disabled = !(handCount === 1 || publicState?.pendingUno === currentUid);
+        const pending = publicState && publicState.pendingUno === currentUid;
+        btnUno.disabled = !(handCount === 1 || pending);
     }
 }
 
