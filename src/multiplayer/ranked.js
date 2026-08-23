@@ -183,11 +183,15 @@ export async function averageHumanMmr(playerMap) {
 }
 
 /**
- * Map MMR → bot difficulty + think style.
+ * Map MMR → personality bot (tactical/chaos saat di atas rata-rata).
  */
 export function botDifficultyFromMmr(botMmr, humanAvg) {
     const diff = (botMmr || humanAvg) - (humanAvg || DEFAULT_MMR);
-    if (diff >= 80) return "hard";
-    if (diff <= -40) return "easy";
-    return "normal";
+    if (diff >= 100) return "tactical";
+    if (diff >= 50) return Math.random() < 0.5 ? "aggressive" : "tactical";
+    if (diff >= 20) return Math.random() < 0.4 ? "chaos" : "balanced";
+    if (diff <= -50) return "rookie";
+    if (diff <= -20) return "defensive";
+    const pool = ["balanced", "aggressive", "defensive", "chaos"];
+    return pool[Math.floor(Math.random() * pool.length)];
 }

@@ -28,7 +28,10 @@ function buildShell(container) {
           <div class="game-main">
             <div class="lobby-header">
                 <span class="text-muted" id="g-turn-line">Turn: —</span>
-                <button class="btn btn-secondary" id="btn-quit" style="max-width:72px;padding:0.5rem">Quit</button>
+                <div style="display:flex;gap:0.35rem">
+                  <button class="btn btn-secondary" id="btn-feedback-game" style="max-width:88px;padding:0.5rem;font-size:0.75rem">Feedback</button>
+                  <button class="btn btn-secondary" id="btn-quit" style="max-width:72px;padding:0.5rem">Quit</button>
+                </div>
             </div>
             <div class="score-bar" id="g-score-bar">Score: —</div>
             <div class="opponents-row" id="g-opponents"></div>
@@ -37,6 +40,7 @@ function buildShell(container) {
                 <div class="discard-zone" id="g-discard"></div>
                 <div id="draw-anim" class="draw-anim hidden"></div>
             </div>
+            <div id="g-spectate"></div>
             <div id="g-challenge"></div>
             <div id="color-picker" class="color-picker hidden">
               <p>Pilih warna</p>
@@ -85,13 +89,16 @@ function wireChrome(container, session) {
     container.querySelector("#btn-draw").onclick = () => handlers.onDraw?.();
     container.querySelector("#btn-uno").onclick = () => handlers.onUno?.();
     container.querySelector("#btn-quit").onclick = () => handlers.onQuit?.();
+    const fb = container.querySelector("#btn-feedback-game");
+    if (fb) fb.onclick = () => handlers.onFeedback?.();
 
     session.showPicker = showPicker;
     session.hidePicker = hidePicker;
 }
 
 function patchChrome(container, publicState, currentUid, hand, handlers) {
-    const myTurn = publicState?.currentTurn === currentUid;
+    const iAmFinished = !!publicState?.finishedPlayers?.[currentUid];
+    const myTurn = publicState?.currentTurn === currentUid && !iAmFinished;
     const dir = (publicState?.direction || 1) > 0 ? "cw" : "ccw";
     const turnName = myTurn
         ? "YOU"
@@ -118,12 +125,14 @@ function patchChrome(container, publicState, currentUid, hand, handlers) {
             .map((p) => {
                 const recon =
                     p.status === "reconnecting" || p.connected === false ? " · 🔄" : "";
+                const finPlace = publicState?.finishedPlayers?.[p.uid]?.place;
+                const placeTag = finPlace ? ` · P${finPlace}` : "";
                 const label = p.displayName || String(p.uid).slice(0, 8);
                 const unoBtn =
                     publicState?.handCounts?.[p.uid] === 1
                         ? `<button class="btn btn-danger btn-cek-uno" data-challenge-uno="${p.uid}">Cek UNO</button>`
                         : "";
-                return `<div class="opponent-chip ${p.uid === publicState?.currentTurn ? "active-turn" : ""} ${p.status === "reconnecting" ? "reconnecting" : ""}">${escapeHtml(label)} · 🂠 ${p.handCount ?? "?"}${recon}${unoBtn}</div>`;
+                return `<div class="opponent-chip ${p.uid === publicState?.currentTurn ? "active-turn" : ""} ${p.status === "reconnecting" ? "reconnecting" : ""}">${escapeHtml(label)} · 🂠 ${finPlace ? 0 : (p.handCount ?? "?")}${placeTag}${recon}${unoBtn}</div>`;
             })
             .join("");
         oppEl.querySelectorAll("[data-challenge-uno]").forEach((btn) => {
@@ -184,8 +193,33 @@ function patchChrome(container, publicState, currentUid, hand, handlers) {
         }
     }
 
+    
+    // Spectator / place banner
+    const fin = publicState?.finishedPlayers?.[currentUid];
+    const specEl = container.querySelector("#g-spectate");
+    if (specEl) {
+        if (fin && publicState?.status === "playing") {
+            const place = fin.place || "?";
+            const watching = publicState?.spectators?.[currentUid];
+            specEl.innerHTML = `
+              <div class="spectate-banner">
+                <p><b>Place ${place}${place === 1 ? " · MVP" : ""}</b> — kamu sudah selesai.</p>
+                <p class="text-muted" style="font-size:0.8rem;margin:0.25rem 0">Nonton tanpa melihat kartu lawan</p>
+                <button type="button" class="btn btn-accent" id="btn-spectate-toggle">
+                  ${watching ? "Sedang menonton ✓" : "Nonton permainan"}
+                </button>
+              </div>`;
+            specEl.querySelector("#btn-spectate-toggle")?.addEventListener("click", () => {
+                handlers.onSpectate?.(!watching);
+            });
+        } else {
+            specEl.innerHTML = "";
+        }
+    }
+
     const btnDraw = container.querySelector("#btn-draw");
-    if (btnDraw) btnDraw.disabled = !myTurn;
+    if (btnDraw) const iFinished = !!publicState?.finishedPlayers?.[currentUid];
+    if (btnDraw) btnDraw.disabled = !myTurn || iFinished;
     const handCount = hand?.length ?? 0;
     const btnUno = container.querySelector("#btn-uno");
     if (btnUno) {
@@ -227,7 +261,8 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
 
     patchChrome(container, publicState, currentUid, hand, handlers);
 
-    const myTurn = publicState?.currentTurn === currentUid;
+    const iAmFinished = !!publicState?.finishedPlayers?.[currentUid];
+    const myTurn = publicState?.currentTurn === currentUid && !iAmFinished;
     const ctx = {
         myTurn,
         topCard: publicState?.topCard,

@@ -1,6 +1,5 @@
 /**
- * Menu — HANYA 1 tombol Ranked (di menu utama), berfungsi.
- * Online menu = casual room saja (tanpa Ranked duplikat).
+ * Menu utama + online — Feedback, legal, credit RyzenShiky
  */
 export function renderMenu(container, handlers = {}) {
     container.innerHTML = `
@@ -17,9 +16,16 @@ export function renderMenu(container, handlers = {}) {
             <button class="btn btn-secondary" id="btn-profile">Profile</button>
             <button class="btn btn-secondary" id="btn-leaderboard-main">Leaderboard</button>
             <button class="btn btn-secondary" id="btn-settings">Settings</button>
+            <button class="btn btn-secondary" id="btn-feedback">Feedback</button>
         </div>
         <p class="text-muted" style="margin-top:0.75rem;font-size:0.75rem;text-align:center;opacity:0.8">
           Ranked 6 pemain · antrean → Ready → main · Card-Elo
+        </p>
+        <p class="dev-credit">Developed by <strong>RyzenShiky</strong></p>
+        <p class="legal-links">
+          <a href="./privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+          ·
+          <a href="./terms.html" target="_blank" rel="noopener">Terms of Service</a>
         </p>
     `;
 
@@ -29,6 +35,7 @@ export function renderMenu(container, handlers = {}) {
     container.querySelector("#btn-profile")?.addEventListener("click", () => handlers.onProfile?.());
     container.querySelector("#btn-leaderboard-main")?.addEventListener("click", () => handlers.onLeaderboard?.());
     container.querySelector("#btn-settings")?.addEventListener("click", () => handlers.onSettings?.());
+    container.querySelector("#btn-feedback")?.addEventListener("click", () => handlers.onFeedback?.());
 }
 
 export function renderOnlineMenu(container, handlers = {}) {
@@ -44,10 +51,12 @@ export function renderOnlineMenu(container, handlers = {}) {
             <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
             <button class="btn btn-secondary" id="btn-rules">CUSTOM RULES</button>
             <button class="btn btn-secondary" id="btn-leaderboard">LEADERBOARD</button>
+            <button class="btn btn-secondary" id="btn-feedback-online">Feedback</button>
         </div>
         <p class="text-muted" style="margin-top:1rem;font-size:0.8rem;text-align:center">
           Ranked hanya di menu utama (1 tombol). Di sini room privat & casual.
         </p>
+        <p class="dev-credit">Developed by <strong>RyzenShiky</strong></p>
     `;
 
     container.querySelector("#btn-back")?.addEventListener("click", () => handlers.onBack?.());
@@ -56,4 +65,5 @@ export function renderOnlineMenu(container, handlers = {}) {
     container.querySelector("#btn-join")?.addEventListener("click", () => handlers.onJoin?.());
     container.querySelector("#btn-rules")?.addEventListener("click", () => handlers.onRules?.());
     container.querySelector("#btn-leaderboard")?.addEventListener("click", () => handlers.onLeaderboard?.());
+    container.querySelector("#btn-feedback-online")?.addEventListener("click", () => handlers.onFeedback?.());
 }

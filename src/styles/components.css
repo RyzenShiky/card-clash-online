@@ -112,3 +112,114 @@
     color: var(--text-muted);
     margin-bottom: 1.5rem;
 }
+
+/* Network banner */
+.network-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.network-banner.hidden {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+.network-banner.warn {
+  background: #b45309;
+  color: #fff;
+}
+.network-banner.ok {
+  background: #15803d;
+  color: #fff;
+}
+
+/* Feedback / settings modal */
+.feedback-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(2, 6, 23, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.feedback-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 1.25rem;
+  width: min(400px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.feedback-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+}
+.fb-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin: 0.5rem 0 0.25rem;
+}
+.fb-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  color: #f1f5f9;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.9rem;
+}
+.fb-ta { resize: vertical; min-height: 96px; }
+.fb-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.fb-status { font-size: 0.8rem; margin-top: 0.5rem; min-height: 1.2em; }
+.fb-status.ok { color: #4ade80; }
+.fb-status.err { color: #f87171; }
+
+.dev-credit {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 1rem;
+}
+.legal-links {
+  text-align: center;
+  font-size: 0.7rem;
+  margin-top: 0.35rem;
+}
+.legal-links a {
+  color: #38bdf8;
+  text-decoration: none;
+}
+.legal-links a:hover { text-decoration: underline; }
+
+/* Focus visible a11y */
+.btn:focus-visible,
+.card-slot:focus-visible,
+.fb-input:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .menu-footer {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+}

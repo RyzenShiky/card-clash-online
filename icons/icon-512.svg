@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <rect x="96" y="72" width="220" height="320" rx="28" fill="#e11d48" stroke="#fff" stroke-width="14"/>
+  <rect x="148" y="104" width="220" height="320" rx="28" fill="#2563eb" stroke="#fff" stroke-width="14"/>
+  <rect x="200" y="136" width="220" height="320" rx="28" fill="#16a34a" stroke="#fff" stroke-width="14"/>
+  <text x="310" y="340" text-anchor="middle" font-size="140" font-family="system-ui,sans-serif" font-weight="800" fill="#fff">7</text>
+  <text x="256" y="480" text-anchor="middle" font-size="36" font-family="system-ui,sans-serif" font-weight="700" fill="#94a3b8">Card Clash</text>
+</svg>

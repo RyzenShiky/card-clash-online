@@ -37,3 +37,174 @@
   align-items: center;
   gap: 0.35rem;
 }
+
+/* Results / podium overlay */
+.results-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(2, 6, 23, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: results-fade 0.25s ease;
+}
+@keyframes results-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.results-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 1.25rem 1.5rem;
+  width: min(420px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.results-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.35rem;
+  text-align: center;
+  color: #fbbf24;
+}
+.results-sub {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1.25rem;
+}
+.results-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  background: #1e293b;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.results-row.mvp {
+  border-color: #fbbf24;
+  background: linear-gradient(90deg, rgba(251,191,36,0.15), #1e293b);
+}
+.results-row.me {
+  box-shadow: inset 0 0 0 1px #38bdf8;
+}
+.results-place {
+  font-size: 1.2rem;
+  text-align: center;
+}
+.results-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.results-meta {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.mvp-badge {
+  background: #fbbf24;
+  color: #111;
+  font-size: 0.65rem;
+  font-weight: 900;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
+.you-badge {
+  background: #38bdf8;
+  color: #0f172a;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+.results-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+.results-actions .btn {
+  min-width: 110px;
+}
+
+.spectate-banner {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid #38bdf8;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem auto;
+  max-width: 360px;
+  text-align: center;
+}
+.spectate-banner p { margin: 0.15rem 0; }
+
+/* FX layer — particles & draw */
+.fx-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 250;
+  overflow: hidden;
+}
+.fx-particle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(var(--scale, 1));
+  animation: fx-burst var(--dur, 0.8s) ease-out forwards;
+  box-shadow: 0 0 6px currentColor;
+}
+@keyframes fx-burst {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(var(--scale, 1)); }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--tx, 0px)), calc(-50% + var(--ty, 0px))) scale(0.2);
+  }
+}
+.fx-draw-card {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  width: 56px;
+  height: 80px;
+  margin-left: -28px;
+  border-radius: 8px;
+  transform: scale(0.6) rotate(-8deg);
+  opacity: 0;
+  z-index: 2;
+}
+.fx-draw-card.fx-draw-fly {
+  animation: fx-draw-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.fx-draw-back {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 3px solid #fff;
+  background:
+    linear-gradient(135deg, #1e3a5f 25%, #0f172a 25%, #0f172a 50%, #1e3a5f 50%, #1e3a5f 75%, #0f172a 75%);
+  background-size: 12px 12px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.45);
+}
+@keyframes fx-draw-in {
+  0% { opacity: 0; transform: translateY(0) scale(0.55) rotate(-12deg); }
+  40% { opacity: 1; transform: translateY(40px) scale(1.05) rotate(4deg); }
+  100% { opacity: 0; transform: translateY(42vh) scale(0.75) rotate(0deg); }
+}

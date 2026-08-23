@@ -98,6 +98,88 @@ export async function updateAccountTypeAfterLink(user) {
 }
 
 /**
+ * Merge data guest ke akun Google yang sudah ada (UID berbeda).
+ * Ranked/stats/awards: ambil yang lebih baik / jumlahkan dengan aman.
+ * Tidak menghapus guest node (bisa di-GC manual) agar rollback aman.
+ */
+export async function mergeGuestDataIntoGoogleUid(guestUid, googleUid) {
+    if (!guestUid || !googleUid || guestUid === googleUid) return;
+
+    const guestSnap = await get(ref(database, `players/${guestUid}`));
+    const googleSnap = await get(ref(database, `players/${googleUid}`));
+    const guest = guestSnap.exists() ? guestSnap.val() : {};
+    const google = googleSnap.exists() ? googleSnap.val() : {};
+
+    const gStats = guest.stats || {};
+    const oStats = google.stats || {};
+    const mergedStats = {
+        matchesPlayed: (oStats.matchesPlayed || 0) + (gStats.matchesPlayed || 0),
+        wins: (oStats.wins || 0) + (gStats.wins || 0),
+        losses: (oStats.losses || 0) + (gStats.losses || 0),
+        winStreak: Math.max(oStats.winStreak || 0, gStats.winStreak || 0),
+        bestWinStreak: Math.max(oStats.bestWinStreak || 0, gStats.bestWinStreak || 0),
+        cardsPlayed: (oStats.cardsPlayed || 0) + (gStats.cardsPlayed || 0),
+        fastestWinMs:
+            [oStats.fastestWinMs, gStats.fastestWinMs].filter((x) => x != null).length
+                ? Math.min(
+                      ...[oStats.fastestWinMs, gStats.fastestWinMs].filter((x) => x != null)
+                  )
+                : null
+    };
+
+    const gRank = guest.ranked || {};
+    const oRank = google.ranked || {};
+    const bestMmr = Math.max(oRank.mmr || 1000, gRank.mmr || 1000);
+    const mergedRanked = {
+        ...oRank,
+        ...gRank,
+        mmr: bestMmr,
+        rankedWins: (oRank.rankedWins || 0) + (gRank.rankedWins || 0),
+        rankedLosses: (oRank.rankedLosses || 0) + (gRank.rankedLosses || 0),
+        tier: oRank.tier || gRank.tier,
+        recent: [...(oRank.recent || []), ...(gRank.recent || [])].slice(-10)
+    };
+    // tier dari mmr terbaik
+    try {
+        const { tierFromMmr } = await import("../multiplayer/ranked.js");
+        mergedRanked.tier = tierFromMmr(bestMmr).id;
+    } catch (_) {}
+
+    const pub = {
+        ...(google.public || {}),
+        accountType: "google",
+        lastSeen: serverTimestamp(),
+        mergedFromGuest: guestUid,
+        // Pertahankan displayName custom guest jika Google kosong
+        displayName:
+            (google.public || {}).displayName ||
+            (guest.public || {}).displayName ||
+            "Player",
+        photoURL: (google.public || {}).photoURL || (guest.public || {}).photoURL || null
+    };
+
+    await update(ref(database, `players/${googleUid}`), {
+        public: pub,
+        stats: mergedStats,
+        ranked: mergedRanked,
+        private: {
+            ...(google.private || {}),
+            ...(guest.private || {}),
+            mergedAt: serverTimestamp(),
+            previousGuestUid: guestUid
+        }
+    });
+
+    // Tandai guest sudah dimigrasi
+    await update(ref(database, `players/${guestUid}/private`), {
+        migratedTo: googleUid,
+        migratedAt: serverTimestamp()
+    }).catch(() => {});
+
+    logger.info("[Profile] Merged guest", guestUid, "→", googleUid, "mmr", bestMmr);
+}
+
+/**
  * Update lastSeen.
  * @param {string} uid
  */

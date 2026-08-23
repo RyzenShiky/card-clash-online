@@ -45,10 +45,16 @@ import { showAuthScreen, hideAuthScreen } from "./ui/authUI.js";
 import { renderMenu, renderOnlineMenu } from "./ui/menuUI.js";
 import { renderLobby, promptJoinCode } from "./ui/lobbyUI.js";
 import { renderGame, destroyGameUI } from "./ui/gameUI.js";
+import { renderResultsOverlay } from "./ui/resultsUI.js";
 import { showNotification } from "./ui/notificationUI.js";
+import { playDrawAnimation, playSpecialFx, playWinFx } from "./ui/fx.js";
+import { initNetworkBanner } from "./ui/networkBanner.js";
+import { openFeedbackModal } from "./ui/feedbackUI.js";
+import { haptic, hapticSuccess } from "./utils/haptic.js";
 import { GameManager } from "./game/gameManager.js";
 import {
     initMatchOnHost,
+    setSpectating,
     subscribePublic,
     subscribeHand,
     playCardOnline,
@@ -108,6 +114,7 @@ function showScreen(name) {
 }
 
 async function boot() {
+    initNetworkBanner();
     logger.info("[Boot] Starting... (RoomManager join-v3)");
 
     try {
@@ -219,12 +226,51 @@ function startApplication() {
             const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
             openLeaderboardModal();
         },
-        onSettings: () => {
-            document.body.classList.toggle("colorblind-on");
-            const on = document.body.classList.contains("colorblind-on");
-            showNotification(on ? "Colorblind mode ON" : "Colorblind mode OFF");
-        }
+        onFeedback: () => openFeedbackModal(document.body, { context: "menu" }),
+        onSettings: () => openSettingsPanel()
     });
+}
+
+function openSettingsPanel() {
+    let panel = document.getElementById("settings-panel");
+    if (panel) panel.remove();
+    panel = document.createElement("div");
+    panel.id = "settings-panel";
+    panel.className = "feedback-modal";
+    const vol = sfx.getVolume?.() ?? 0.7;
+    const muted = sfx.isMuted?.() ?? false;
+    panel.innerHTML = `
+      <div class="feedback-card" role="dialog" aria-label="Settings">
+        <h2>Settings</h2>
+        <label class="fb-label">Volume SFX</label>
+        <input type="range" id="set-vol" min="0" max="100" value="${Math.round(vol * 100)}" />
+        <label class="fb-label" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
+          <input type="checkbox" id="set-mute" ${muted ? "checked" : ""} /> Mute
+        </label>
+        <label class="fb-label" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem">
+          <input type="checkbox" id="set-cb" ${document.body.classList.contains("colorblind-on") ? "checked" : ""} /> Colorblind mode
+        </label>
+        <div class="fb-actions" style="margin-top:1rem">
+          <button type="button" class="btn btn-primary" id="set-close">Tutup</button>
+        </div>
+        <p class="dev-credit" style="margin-top:1rem">Developed by <strong>RyzenShiky</strong></p>
+      </div>`;
+    document.body.appendChild(panel);
+    panel.querySelector("#set-vol").oninput = (e) => {
+        sfx.setVolume(Number(e.target.value) / 100);
+        sfx.unlock?.();
+        sfx.click?.();
+    };
+    panel.querySelector("#set-mute").onchange = (e) => {
+        sfx.setMuted(e.target.checked);
+    };
+    panel.querySelector("#set-cb").onchange = (e) => {
+        document.body.classList.toggle("colorblind-on", e.target.checked);
+    };
+    panel.querySelector("#set-close").onclick = () => panel.remove();
+    panel.onclick = (e) => {
+        if (e.target === panel) panel.remove();
+    };
 }
 
 async function showProfileInfo() {
@@ -251,6 +297,7 @@ function showOnlineMenu() {
         onQuick: () => handleMatchmaking("casual"),
         onCreate: handleCreateRoom,
         onJoin: handleJoinRoom,
+        onFeedback: () => openFeedbackModal(document.body, { context: "online-menu" }),
         onRules: async () => {
             const { openRulesCreator } = await import("./ui/rulesUI.js");
             const rules = await openRulesCreator(currentUser);
@@ -589,11 +636,19 @@ function enterMultiplayerMatch(roomId, room) {
                         ref(database, `rooms/${roomId}/hands/${turn}`)
                     );
                     const botHand = handSnap.exists() ? handSnap.val() : [];
+                    const oppCounts = Object.entries(state.handCounts || {})
+                        .filter(([id]) => id !== turn)
+                        .map(([, n]) => n);
                     const action = chooseBotAction(
                         botHand,
                         state.topCard,
                         state.currentColor,
-                        diff
+                        diff,
+                        {
+                            opponentCounts: oppCounts,
+                            stacking: state.stacking,
+                            stackType: state.stackType
+                        }
                     );
                     if (action.type === "play") {
                         await playCardOnline(roomId, turn, action.cardId, action.color);
@@ -635,6 +690,8 @@ function enterMultiplayerMatch(roomId, room) {
                 publicState.stackAmount,
                 publicState.pendingUno,
                 publicState.winner,
+                publicState.placements?.length,
+                publicState.status,
                 publicState.status,
                 publicState.challenge?.type || "",
                 counts,
@@ -669,6 +726,8 @@ function enterMultiplayerMatch(roomId, room) {
                     isBot: !!roomPlayers[uid]?.isBot
                 })),
                 winner: publicState.winner,
+                publicState.placements?.length,
+                publicState.status,
                 scores: publicState.scores,
                 targetScore: publicState.targetScore,
                 challenge: publicState.challenge,
@@ -707,6 +766,7 @@ function enterMultiplayerMatch(roomId, room) {
                                 color
                             );
                             sfx.playCard();
+                            hapticSuccess();
                         } catch (e) {
                             sfx.error();
                             showNotification(e.message);
@@ -715,6 +775,7 @@ function enterMultiplayerMatch(roomId, room) {
                     onDraw: async () => {
                         try {
                             await drawCardOnline(roomId, currentUser.uid);
+                            playDrawAnimation(1);
                             sfx.draw();
                         } catch (e) {
                             sfx.error();
@@ -765,6 +826,14 @@ function enterMultiplayerMatch(roomId, room) {
                     onAcceptWd4: async () => {
                         showNotification("WD4 diterima");
                     },
+                    onSpectate: async (enabled) => {
+                        try {
+                            await setSpectating(roomId, currentUser.uid, enabled);
+                            showNotification(enabled ? "Mode nonton aktif" : "Nonton nonaktif");
+                        } catch (e) {
+                            showNotification(e.message);
+                        }
+                    },
                     onQuit: async () => {
                         cleanupMatchSubs();
                         soloGame = null;
@@ -775,14 +844,46 @@ function enterMultiplayerMatch(roomId, room) {
 
             ensureChat();
 
-            if (publicState.winner) {
+            // Place mid-game: pemain yang sudah kosong bisa nonton; yang lain LANJUT
+            const myFin = publicState.finishedPlayers?.[currentUser.uid];
+            if (myFin && window.__ccPlaceToast !== myFin.place) {
+                window.__ccPlaceToast = myFin.place;
                 sfx.win();
-                const msg =
+                showNotification(
+                    myFin.place === 1
+                        ? "Juara 1 MVP! Pilih Nonton untuk saksikan yang lain."
+                        : `Kamu Place ${myFin.place}!`
+                );
+            }
+
+            // Podium hanya saat match benar-benar selesai (bukan saat pemenang pertama)
+            if (publicState.status === "finished" && !window.__ccResultsShown) {
+                window.__ccResultsShown = true;
+                sfx.win();
+                const winName =
+                    publicState.placements?.find((x) => x.place === 1)?.name ||
+                    (publicState.winner === currentUser.uid
+                        ? "Kamu"
+                        : String(publicState.winner || "").slice(0, 8));
+                showNotification(
                     publicState.winner === currentUser.uid
-                        ? "Kamu menang!"
-                        : "Pemenang: " +
-                          String(publicState.winner).slice(0, 8);
-                showNotification(msg);
+                        ? "Kamu juara 1 — MVP!"
+                        : `Pemenang: ${winName}`
+                );
+                renderResultsOverlay(screens.game(), {
+                    publicState,
+                    currentUid: currentUser.uid,
+                    onMenu: async () => {
+                        window.__ccResultsShown = false;
+                        window.__ccPlaceToast = null;
+                        cleanupMatchSubs();
+                        await leaveCurrentRoom();
+                    },
+                    onReplay: async () => {
+                        const { openReplayModal } = await import("./ui/replayUI.js");
+                        openReplayModal(roomId);
+                    }
+                });
                 if (isHost && !rankedApplied) {
                     rankedApplied = true;
                     const mode = room.meta?.mode || currentMatchMode;
@@ -793,13 +894,6 @@ function enterMultiplayerMatch(roomId, room) {
                             publicState.winner
                         ).catch((e) => logger.warn(e));
                     }
-                    // Offer replay
-                    setTimeout(async () => {
-                        if (window.confirm("Lihat Match Replay?")) {
-                            const { openReplayModal } = await import("./ui/replayUI.js");
-                            openReplayModal(roomId);
-                        }
-                    }, 800);
                 }
             }
         };
@@ -985,7 +1079,7 @@ function runAITurn() {
     if (soloGame.turn.currentPlayerId !== "ai-bot") return;
 
     const hand = soloGame.getPrivateHand("ai-bot");
-    const action = chooseBotAction(hand, soloGame.topCard, soloGame.currentColor, "normal");
+    const action = chooseBotAction(hand, soloGame.topCard, soloGame.currentColor, "tactical");
     try {
         if (action.type === "play") {
             soloGame.playCard("ai-bot", action.cardId, action.color || null);

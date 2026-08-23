@@ -29,6 +29,21 @@ function nextPlayer(ids, current, dir) {
     return ids[(i + dir + len * 20) % len];
 }
 
+/** Skip pemain yang sudah finish / spectator */
+function nextActivePlayer(ids, current, dir, finished = {}) {
+    if (!ids?.length) return current;
+    let cursor = current;
+    for (let n = 0; n < ids.length + 1; n++) {
+        cursor = nextPlayer(ids, cursor, dir);
+        if (!finished[cursor]) return cursor;
+    }
+    return cursor;
+}
+
+function activeIds(ids, finished = {}) {
+    return (ids || []).filter((id) => !finished[id]);
+}
+
 function hasMatchingColor(hand, color) {
     if (!color) return false;
     return (hand || []).some(
@@ -83,6 +98,10 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         challenge: null,
         lastAnim: null,
         turnEndsAt: Date.now() + (settings.turnTimer || 30) * 1000,
+        /** uid → { place, finishedAt, name } — pemain yang sudah keluar */
+        finishedPlayers: {},
+        placements: [],
+        spectators: {},
         updatedAt: Date.now()
     };
 
@@ -249,6 +268,7 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
 
     const result = await runTransaction(gameRef(roomId), (game) => {
         if (!game || game.status !== "playing" || game.winner) return;
+        if (game.finishedPlayers?.[uid]) return;
         if (game.currentTurn !== uid) return;
 
         const stackingOn = !!game.stacking;
@@ -344,25 +364,64 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
         }
 
         if (counts[uid] === 0) {
-            game.roundWinner = uid;
-            game.status = "round_end";
+            // Pemain keluar (place) — game LANJUT untuk yang masih aktif
+            const finished = { ...(game.finishedPlayers || {}) };
+            if (!finished[uid]) {
+                const placeNum = Object.keys(finished).length + 1;
+                finished[uid] = {
+                    place: placeNum,
+                    finishedAt: Date.now(),
+                    uid
+                };
+                game.finishedPlayers = finished;
+                if (placeNum === 1) {
+                    game.roundWinner = uid;
+                    game.firstWinner = uid;
+                }
+            }
+            const active = activeIds(ids, game.finishedPlayers);
+            if (active.length <= 1) {
+                // Sisa 0–1 pemain → match selesai
+                game._pendingMatchEnd = true;
+                game.status = "round_end";
+            } else {
+                game.status = "playing";
+                let cursor = nextActivePlayer(ids, uid, dir, game.finishedPlayers);
+                const isSkip =
+                    playValue === "skip" ||
+                    (playValue === "reverse" && active.length === 2);
+                const isDrawSkip =
+                    !stackingOn &&
+                    (playValue === "draw2" || playValue === "wild_draw4");
+                if (isSkip || isDrawSkip) {
+                    cursor = nextActivePlayer(
+                        ids,
+                        cursor,
+                        dir,
+                        game.finishedPlayers
+                    );
+                }
+                game.currentTurn = cursor;
+                game.turnEndsAt = Date.now() + 30000;
+            }
         } else {
-            // Giliran berikutnya
-            let cursor = nextPlayer(ids, uid, dir);
-
+            // Giliran berikutnya (skip yang sudah finish)
+            let cursor = nextActivePlayer(ids, uid, dir, game.finishedPlayers || {});
+            const active = activeIds(ids, game.finishedPlayers || {});
             const isSkip =
                 playValue === "skip" ||
-                (playValue === "reverse" && ids.length === 2);
-
-            // +2/+4 tanpa stack: korban dilewati
+                (playValue === "reverse" && active.length === 2);
             const isDrawSkip =
                 !stackingOn &&
                 (playValue === "draw2" || playValue === "wild_draw4");
-
             if (isSkip || isDrawSkip) {
-                cursor = nextPlayer(ids, cursor, dir);
+                cursor = nextActivePlayer(
+                    ids,
+                    cursor,
+                    dir,
+                    game.finishedPlayers || {}
+                );
             }
-
             game.currentTurn = cursor;
             game.turnEndsAt = Date.now() + 30000;
         }
@@ -392,31 +451,163 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
         g = await giveCardsFromPile(roomId, g, forceUid, forceN);
     }
 
-    if (g?.status === "round_end" && g.roundWinner) {
-        await finalizeRound(roomId, g);
+    // Setelah ada yang keluar: update skor + mungkin end match
+    if (g?.finishedPlayers?.[uid] && countsEmpty(g, uid)) {
+        await afterPlayerFinished(roomId, g, uid);
+        g = (await get(gameRef(roomId))).val();
+    } else if (g?._pendingMatchEnd || g?.status === "round_end") {
+        await endMatchWithPlacements(roomId, g);
         g = (await get(gameRef(roomId))).val();
     }
 
     return g;
 }
 
-async function finalizeRound(roomId, game) {
+function countsEmpty(game, uid) {
+    return (game?.handCounts?.[uid] ?? 1) === 0;
+}
+
+/** Setelah pemain place: tambah skor, notifikasi; game tetap playing jika masih ada lawan */
+async function afterPlayerFinished(roomId, game, finishedUid) {
+    const finished = game.finishedPlayers || {};
+    const entry = finished[finishedUid];
+    if (!entry) return;
+
     const scores = { ...(game.scores || {}) };
-    let totalGained = 0;
+    let gained = 0;
     for (const pid of game.playerIds || []) {
-        if (pid === game.roundWinner) continue;
+        if (finished[pid]) continue;
         const h = (await get(handRef(roomId, pid))).val() || [];
-        totalGained += scoreHand(h);
+        gained += scoreHand(h);
     }
-    scores[game.roundWinner] = (scores[game.roundWinner] || 0) + totalGained;
-    const target = game.targetScore || 500;
-    const matchOver = scores[game.roundWinner] >= target;
+    // Hanya place 1 dapat poin penuh dari sisa kartu aktif (opsional: scale by place)
+    if (entry.scored) {
+        // sudah diproses
+        return;
+    }
+    if (entry.place === 1) {
+        scores[finishedUid] = (scores[finishedUid] || 0) + gained;
+    }
+
+    let names = {};
+    try {
+        const pSnap = await get(ref(database, `rooms/${roomId}/players`));
+        for (const [id, p] of Object.entries(pSnap.val() || {})) {
+            names[id] = p.displayName || String(id).slice(0, 8);
+        }
+    } catch (_) {}
+
+    const fp = {
+        ...finished,
+        [finishedUid]: {
+            ...entry,
+            scored: true,
+            name: names[finishedUid] || entry.name || String(finishedUid).slice(0, 8)
+        }
+    };
+
+    const active = activeIds(game.playerIds, fp);
+    const patch = {
+        scores,
+        finishedPlayers: fp,
+        updatedAt: Date.now()
+    };
+
+    if (active.length <= 1) {
+        // Assign last place ke sisa 1 (atau end)
+        if (active.length === 1) {
+            const last = active[0];
+            fp[last] = {
+                place: Object.keys(fp).length + 1,
+                finishedAt: Date.now(),
+                uid: last,
+                name: names[last] || String(last).slice(0, 8)
+            };
+            patch.finishedPlayers = fp;
+        }
+        await update(gameRef(roomId), patch);
+        await endMatchWithPlacements(roomId, {
+            ...game,
+            ...patch,
+            finishedPlayers: fp
+        });
+        return;
+    }
+
+    // Masih ada yang main — tetap playing
+    patch.status = "playing";
+    patch.winner = null;
+    await update(gameRef(roomId), patch);
+}
+
+/** Semua place terisi → status finished + podium */
+async function endMatchWithPlacements(roomId, game) {
+    const finishedAt = Date.now();
+    let names = {};
+    try {
+        const pSnap = await get(ref(database, `rooms/${roomId}/players`));
+        for (const [id, p] of Object.entries(pSnap.val() || {})) {
+            names[id] = p.displayName || String(id).slice(0, 8);
+        }
+    } catch (_) {}
+
+    const fp = { ...(game.finishedPlayers || {}) };
+    // Siapa belum ada di finished → place terakhir by sisa kartu
+    const remaining = (game.playerIds || []).filter((id) => !fp[id]);
+    const meta = [];
+    for (const pid of remaining) {
+        const h = (await get(handRef(roomId, pid))).val() || [];
+        meta.push({ uid: pid, cardsLeft: h.length, handScore: scoreHand(h) });
+    }
+    meta.sort((a, b) => a.cardsLeft - b.cardsLeft || a.handScore - b.handScore);
+    let nextPlace = Object.keys(fp).length + 1;
+    for (const m of meta) {
+        fp[m.uid] = {
+            place: nextPlace++,
+            finishedAt,
+            uid: m.uid,
+            name: names[m.uid] || String(m.uid).slice(0, 8),
+            cardsLeft: m.cardsLeft,
+            handScore: m.handScore
+        };
+    }
+
+    const placements = Object.values(fp)
+        .map((e) => ({
+            place: e.place,
+            uid: e.uid,
+            name: e.name || names[e.uid] || String(e.uid).slice(0, 8),
+            cardsLeft: e.cardsLeft ?? 0,
+            handScore: e.handScore ?? 0,
+            isMvp: e.place === 1,
+            finishedAt: e.finishedAt || finishedAt
+        }))
+        .sort((a, b) => a.place - b.place);
+
+    const winner = placements.find((p) => p.place === 1)?.uid || game.firstWinner;
 
     await update(gameRef(roomId), {
-        scores,
-        status: matchOver ? "finished" : "round_end",
-        winner: matchOver ? game.roundWinner : null,
-        updatedAt: Date.now()
+        status: "finished",
+        winner,
+        finishedPlayers: fp,
+        placements,
+        results: {
+            winner,
+            mvp: winner,
+            finishedAt,
+            placements
+        },
+        _pendingMatchEnd: null,
+        updatedAt: finishedAt
+    });
+}
+
+/** Client: pilih mode nonton (setelah place) */
+export async function setSpectating(roomId, uid, enabled = true) {
+    await update(gameRef(roomId), {
+        [`spectators/${uid}`]: enabled
+            ? { since: Date.now(), uid }
+            : null
     });
 }
 
@@ -451,7 +642,8 @@ export async function drawCardOnline(roomId, uid) {
     }
 
     const result = await runTransaction(gameRef(roomId), (game) => {
-        if (!game || game.status !== "playing") return;
+        if (!game || game.status !== "playing" || game.winner) return;
+        if (game.finishedPlayers?.[uid]) return;
         if (game.currentTurn !== uid) return;
         if (game.stackAmount > 0 && game.stacking) return;
 
