@@ -1,222 +1,332 @@
 /**
- * Voice chat — WebRTC mesh via Firebase RTDB signaling (tanpa Agora).
- * Non-blocking: gagal mic / permission tidak menahan game start.
+ * WebRTC voice — signaling via RTDB
+ * Fixes: pending ICE queue, push() keys, sessionId, connection state, play() unlock
  */
 import {
     ref,
     set,
+    push,
     onChildAdded,
-    onChildRemoved,
+    onValue,
     remove,
-    off
+    off,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 import { database } from "../firebase/services.js";
 import { logger } from "../utils/logger.js";
-
-let localStream = null;
-let muted = false;
-let roomIdActive = null;
-let myUid = null;
-/** @type {Map<string, RTCPeerConnection>} */
-const peers = new Map();
-const unsubs = [];
 
 const ICE = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" }
+        // Production: tambah TURN server di sini
     ]
 };
 
+let localStream = null;
+let roomIdActive = null;
+let myUid = null;
+let sessionId = null;
+let joinAttemptId = null;
+/** @type {Map<string, RTCPeerConnection>} */
+const peers = new Map();
+/** @type {Map<string, RTCIceCandidateInit[]>} */
+const pendingIce = new Map();
+let signalUnsub = null;
+let membersUnsub = null;
+let disposed = false;
+
+function voiceRoot(roomId) {
+    return ref(database, `rooms/${roomId}/voice`);
+}
+
+function isAttemptValid(id) {
+    return !disposed && joinAttemptId === id && sessionId;
+}
+
 export function isVoiceAvailable() {
-    return (
-        typeof navigator !== "undefined" &&
-        !!navigator.mediaDevices?.getUserMedia &&
-        typeof RTCPeerConnection !== "undefined"
-    );
+    return typeof RTCPeerConnection !== "undefined" && !!(navigator.mediaDevices?.getUserMedia);
 }
 
-function signalPath(roomId) {
-    return `rooms/${roomId}/voice`;
-}
-
-/**
- * Join voice — fire-and-forget safe. Max timeout 4s agar tidak gantung start game.
- */
 export async function joinVoiceChannel(roomId, uid) {
     if (!isVoiceAvailable()) {
-        logger.info("[Voice] WebRTC tidak tersedia di browser ini");
+        logger.warn("[Voice] WebRTC tidak tersedia");
         return false;
     }
-    if (roomIdActive === roomId && myUid === uid) return true;
-
-    await leaveVoiceChannel().catch(() => {});
-
+    disposed = false;
+    const attempt = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    joinAttemptId = attempt;
+    sessionId = `vs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     roomIdActive = roomId;
     myUid = uid;
 
-    const timeout = new Promise((resolve) => setTimeout(() => resolve("timeout"), 4000));
-    const work = doJoin(roomId, uid);
-    const result = await Promise.race([work, timeout]);
-    if (result === "timeout") {
-        logger.warn("[Voice] join timeout — game lanjut tanpa voice");
-        return false;
-    }
-    return !!result;
-}
-
-async function doJoin(roomId, uid) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
             video: false
         });
     } catch (e) {
-        logger.warn("[Voice] mic ditolak / error:", e.message);
+        logger.error("[Voice] getUserMedia failed", e);
+        return false;
+    }
+    if (!isAttemptValid(attempt)) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
         return false;
     }
 
-    // Presence di channel voice
-    const meRef = ref(database, `${signalPath(roomId)}/members/${uid}`);
-    await set(meRef, { uid, joinedAt: Date.now() });
-
-    const membersRef = ref(database, `${signalPath(roomId)}/members`);
-    const onMember = onChildAdded(membersRef, async (snap) => {
-        const peerUid = snap.key;
-        if (!peerUid || peerUid === uid) return;
-        // Hanya satu sisi yang offer (uid lebih kecil)
-        if (uid < peerUid) {
-            await createOffer(roomId, uid, peerUid);
-        }
+    // Register member
+    await set(ref(database, `rooms/${roomId}/voice/members/${uid}`), {
+        uid,
+        sessionId,
+        joinedAt: serverTimestamp()
     });
-    unsubs.push(() => off(membersRef, "child_added", onMember));
 
-    const signalsRef = ref(database, `${signalPath(roomId)}/signals/${uid}`);
-    const onSignal = onChildAdded(signalsRef, async (snap) => {
+    // Listen signals targeted to me
+    const sigRef = ref(database, `rooms/${roomId}/voice/signals/${uid}`);
+    const onSig = async (snap) => {
+        if (!isAttemptValid(attempt)) return;
         const data = snap.val();
-        if (!data) return;
-        try {
-            await handleSignal(roomId, uid, data);
-        } catch (e) {
-            logger.warn("[Voice] signal:", e.message);
+        if (!data || data.sessionId !== sessionId) {
+            // stale session — delete signal
+            try {
+                await remove(snap.ref);
+            } catch (_) {}
+            return;
         }
-        remove(snap.ref).catch(() => {});
-    });
-    unsubs.push(() => off(signalsRef, "child_added", onSignal));
+        try {
+            await handleSignal(data);
+        } catch (e) {
+            logger.warn("[Voice] signal handle error", e?.name, e?.message);
+        }
+        try {
+            await remove(snap.ref);
+        } catch (_) {}
+    };
+    onChildAdded(sigRef, onSig);
+    signalUnsub = () => off(sigRef, "child_added", onSig);
 
-    logger.info("[Voice] WebRTC joined", roomId);
+    // Existing + new members
+    const memRef = ref(database, `rooms/${roomId}/voice/members`);
+    const onMem = async (snap) => {
+        if (!isAttemptValid(attempt)) return;
+        const members = snap.val() || {};
+        for (const peerUid of Object.keys(members)) {
+            if (peerUid === uid) continue;
+            if (peers.has(peerUid)) continue;
+            // Lower uid initiates offer to avoid glare
+            if (uid < peerUid) {
+                try {
+                    await createOffer(peerUid);
+                } catch (e) {
+                    logger.warn("[Voice] offer failed", peerUid, e.message);
+                }
+            }
+        }
+    };
+    onValue(memRef, onMem);
+    membersUnsub = () => off(memRef);
+
+    logger.info("[Voice] joined session", sessionId);
     return true;
 }
 
-async function createOffer(roomId, fromUid, toUid) {
-    if (peers.has(toUid)) return;
-    const pc = new RTCPeerConnection(ICE);
-    peers.set(toUid, pc);
-    wirePc(pc, roomId, fromUid, toUid);
-
-    (localStream?.getTracks() || []).forEach((t) => pc.addTrack(t, localStream));
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await set(ref(database, `${signalPath(roomId)}/signals/${toUid}/${Date.now()}`), {
-        type: "offer",
-        from: fromUid,
-        sdp: offer
+async function sendSignal(toUid, payload) {
+    if (!roomIdActive || !sessionId) return;
+    const r = ref(database, `rooms/${roomIdActive}/voice/signals/${toUid}`);
+    await push(r, {
+        ...payload,
+        from: myUid,
+        sessionId,
+        createdAt: serverTimestamp()
     });
 }
 
-async function handleSignal(roomId, myId, data) {
-    const from = data.from;
-    if (!from || from === myId) return;
+async function ensurePc(peerUid) {
+    if (peers.has(peerUid)) return peers.get(peerUid);
+    const pc = new RTCPeerConnection(ICE);
+    peers.set(peerUid, pc);
+    pendingIce.set(peerUid, []);
 
-    if (data.type === "offer") {
-        let pc = peers.get(from);
-        if (!pc) {
-            pc = new RTCPeerConnection(ICE);
-            peers.set(from, pc);
-            wirePc(pc, roomId, myId, from);
-            (localStream?.getTracks() || []).forEach((t) => pc.addTrack(t, localStream));
-        }
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await set(ref(database, `${signalPath(roomId)}/signals/${from}/${Date.now()}`), {
-            type: "answer",
-            from: myId,
-            sdp: answer
+    if (localStream) {
+        localStream.getTracks().forEach((track) => {
+            pc.addTrack(track, localStream);
         });
-    } else if (data.type === "answer") {
-        const pc = peers.get(from);
-        if (pc && !pc.currentRemoteDescription) {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        }
-    } else if (data.type === "ice" && data.candidate) {
-        const pc = peers.get(from);
-        if (pc) {
-            try {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (_) {}
-        }
     }
-}
 
-function wirePc(pc, roomId, myId, peerUid) {
     pc.onicecandidate = (ev) => {
-        if (!ev.candidate) return;
-        set(ref(database, `${signalPath(roomId)}/signals/${peerUid}/${Date.now()}`), {
-            type: "ice",
-            from: myId,
-            candidate: ev.candidate.toJSON()
-        }).catch(() => {});
+        if (ev.candidate) {
+            sendSignal(peerUid, {
+                type: "ice",
+                candidate: ev.candidate.toJSON()
+            }).catch(() => {});
+        }
     };
+
     pc.ontrack = (ev) => {
-        const stream = ev.streams[0];
-        if (!stream) return;
         let audio = document.getElementById(`voice-audio-${peerUid}`);
         if (!audio) {
             audio = document.createElement("audio");
             audio.id = `voice-audio-${peerUid}`;
             audio.autoplay = true;
             audio.playsInline = true;
-            audio.style.display = "none";
+            audio.setAttribute("playsinline", "true");
             document.body.appendChild(audio);
         }
-        audio.srcObject = stream;
+        audio.srcObject = ev.streams[0];
+        audio.play().catch(() => {
+            logger.warn("[Voice] autoplay blocked — user gesture needed");
+            showUnlockAudio();
+        });
     };
+
+    pc.onconnectionstatechange = () => {
+        logger.info("[Voice] pc", peerUid, "state=", pc.connectionState);
+        if (pc.connectionState === "failed") {
+            try {
+                pc.restartIce();
+            } catch (_) {}
+        }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        logger.info("[Voice] ice", peerUid, pc.iceConnectionState);
+    };
+
+    return pc;
 }
 
-export function toggleMuteMic(wantMuted) {
-    muted = !!wantMuted;
-    if (localStream) {
-        localStream.getAudioTracks().forEach((t) => {
-            t.enabled = !muted;
-        });
+async function flushPendingIce(peerUid, pc) {
+    const queue = pendingIce.get(peerUid) || [];
+    pendingIce.set(peerUid, []);
+    for (const c of queue) {
+        try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+        } catch (e) {
+            logger.warn(
+                "[Voice] addIceCandidate failed",
+                peerUid,
+                pc.signalingState,
+                e?.name,
+                e?.message
+            );
+        }
     }
+}
+
+async function createOffer(peerUid) {
+    const pc = await ensurePc(peerUid);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sendSignal(peerUid, {
+        type: "offer",
+        sdp: offer.sdp
+    });
+}
+
+async function handleSignal(data) {
+    const from = data.from;
+    if (!from || from === myUid) return;
+
+    if (data.type === "offer" && data.sdp) {
+        const pc = await ensurePc(from);
+        await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: "offer", sdp: data.sdp })
+        );
+        await flushPendingIce(from, pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await sendSignal(from, { type: "answer", sdp: answer.sdp });
+        return;
+    }
+
+    if (data.type === "answer" && data.sdp) {
+        const pc = peers.get(from);
+        if (!pc) return;
+        await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: "answer", sdp: data.sdp })
+        );
+        await flushPendingIce(from, pc);
+        return;
+    }
+
+    if (data.type === "ice" && data.candidate) {
+        const pc = peers.get(from);
+        if (!pc || !pc.remoteDescription) {
+            const q = pendingIce.get(from) || [];
+            q.push(data.candidate);
+            pendingIce.set(from, q);
+            return;
+        }
+        try {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+            logger.warn(
+                "[Voice] addIceCandidate failed",
+                from,
+                pc.connectionState,
+                pc.signalingState,
+                e?.name,
+                e?.message
+            );
+        }
+    }
+}
+
+function showUnlockAudio() {
+    if (document.getElementById("voice-unlock-btn")) return;
+    const btn = document.createElement("button");
+    btn.id = "voice-unlock-btn";
+    btn.className = "btn btn-accent btn-mic";
+    btn.textContent = "🔊 Aktifkan suara";
+    btn.style.top = "52px";
+    btn.onclick = () => {
+        document.querySelectorAll("audio[id^='voice-audio-']").forEach((a) => {
+            a.play().catch(() => {});
+        });
+        btn.remove();
+    };
+    document.body.appendChild(btn);
+}
+
+export function toggleMuteMic(muted) {
+    if (!localStream) return;
+    localStream.getAudioTracks().forEach((t) => {
+        t.enabled = !muted;
+    });
 }
 
 export async function leaveVoiceChannel() {
-    unsubs.splice(0).forEach((u) => {
-        try {
-            u();
-        } catch (_) {}
-    });
-    for (const [, pc] of peers) {
+    disposed = true;
+    joinAttemptId = null;
+    try {
+        signalUnsub?.();
+        membersUnsub?.();
+    } catch (_) {}
+    signalUnsub = null;
+    membersUnsub = null;
+
+    for (const [uid, pc] of peers) {
         try {
             pc.close();
         } catch (_) {}
+        document.getElementById(`voice-audio-${uid}`)?.remove();
     }
     peers.clear();
+    pendingIce.clear();
+
     if (localStream) {
         localStream.getTracks().forEach((t) => t.stop());
         localStream = null;
     }
-    document.querySelectorAll("[id^=voice-audio-]").forEach((el) => el.remove());
+
     if (roomIdActive && myUid) {
         try {
-            await remove(ref(database, `${signalPath(roomIdActive)}/members/${myUid}`));
+            await remove(ref(database, `rooms/${roomIdActive}/voice/members/${myUid}`));
         } catch (_) {}
     }
     roomIdActive = null;
     myUid = null;
-    muted = false;
+    sessionId = null;
+    document.getElementById("voice-unlock-btn")?.remove();
 }

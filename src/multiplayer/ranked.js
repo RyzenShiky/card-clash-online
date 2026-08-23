@@ -30,8 +30,8 @@ export const RANK_TIERS = [
 ];
 
 export const DEFAULT_MMR = 1000;
-/** Ranked penuh = 6 kursi */
-export const RANKED_MAX_PLAYERS = 6;
+/** Ranked penuh = 4 kursi */
+export const RANKED_MAX_PLAYERS = 4;
 
 export function tierFromMmr(mmr) {
     const m = Math.max(0, Number(mmr) || 0);

@@ -90,13 +90,16 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         scores,
         targetScore: settings.targetScore ?? 500,
         // Default OFF: +2/+4 langsung kena penalti + skip
-        stacking: settings.stacking ?? false,
+        stacking: false, // +2/+4 langsung penalti, tidak chain
         stackAmount: 0,
         stackType: null,
         pendingUno: null,
         unoCalled: {},
         challenge: null,
         lastAnim: null,
+        turnVersion: 0,
+        lastActionId: null,
+        pendingHands: {},
         turnEndsAt: Date.now() + (settings.turnTimer || 30) * 1000,
         /** uid → { place, finishedAt, name } — pemain yang sudah keluar */
         finishedPlayers: {},
@@ -426,12 +429,14 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
             game.turnEndsAt = Date.now() + 30000;
         }
 
+        game.turnVersion = (game.turnVersion || 0) + 1;
+        game.lastActionId = playId + "_" + (game.turnVersion || 0);
         game.updatedAt = Date.now();
         return game;
     });
 
     if (!result.committed) {
-        throw new Error("Kartu tidak valid / bukan giliran / harus stack");
+        throw new Error("Kartu tidak valid / bukan giliran / pemain sudah selesai / harus stack");
     }
 
     // Hapus kartu dari hand
@@ -613,7 +618,9 @@ export async function setSpectating(roomId, uid, enabled = true) {
 
 export async function acceptStack(roomId, uid) {
     const result = await runTransaction(gameRef(roomId), (game) => {
-        if (!game || game.currentTurn !== uid) return;
+        if (!game || game.status !== "playing") return;
+        if (game.finishedPlayers?.[uid]) return;
+        if (game.currentTurn !== uid) return;
         if (!game.stackAmount) return;
         const n = game.stackAmount;
         game._forceDraw = { uid, n };
@@ -634,46 +641,112 @@ export async function acceptStack(roomId, uid) {
     return g;
 }
 
-export async function drawCardOnline(roomId, uid) {
-    // Cek dulu stack
+export async function drawCardOnline(roomId, uid, opts = {}) {
+    const actionId = opts.actionId || `${uid}_draw_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const expectedTurnVersion = opts.turnVersion ?? null;
+
+    // Stack accept
     const pre = (await get(gameRef(roomId))).val();
     if (pre?.stackAmount > 0 && pre.stacking && pre.currentTurn === uid) {
+        if (pre.finishedPlayers?.[uid]) {
+            throw new Error("Pemain sudah selesai — tidak bisa draw");
+        }
         return acceptStack(roomId, uid);
     }
+    if (pre?.finishedPlayers?.[uid]) {
+        throw new Error("Pemain sudah selesai — tidak bisa draw");
+    }
+
+    let reservedCard = null;
 
     const result = await runTransaction(gameRef(roomId), (game) => {
-        if (!game || game.status !== "playing" || game.winner) return;
+        if (!game || game.status !== "playing") return;
+        if (game.winner) return;
         if (game.finishedPlayers?.[uid]) return;
         if (game.currentTurn !== uid) return;
         if (game.stackAmount > 0 && game.stacking) return;
+
+        // Idempotency
+        if (game.lastActionId === actionId) {
+            return game; // already applied
+        }
+        if (
+            expectedTurnVersion != null &&
+            game.turnVersion != null &&
+            game.turnVersion !== expectedTurnVersion
+        ) {
+            return; // stale
+        }
 
         const pile = game.drawPile || [];
         if (!pile.length) return;
 
         const drawn = pile.pop();
+        reservedCard = drawn;
         game.drawPile = pile;
         game.drawPileCount = pile.length;
-        game._drawnCard = { uid, card: drawn };
+
+        // Simpan kartu di pendingHands agar tidak hilang jika hand write gagal
+        const pending = { ...(game.pendingHands || {}) };
+        const prev = Array.isArray(pending[uid]) ? pending[uid] : [];
+        pending[uid] = [...prev, drawn];
+        game.pendingHands = pending;
 
         const counts = { ...(game.handCounts || {}) };
         counts[uid] = (counts[uid] || 0) + 1;
         game.handCounts = counts;
 
         const ids = game.playerIds || [];
-        game.currentTurn = nextPlayer(ids, uid, game.direction || 1);
+        const dir = game.direction || 1;
+        game.currentTurn = nextActivePlayer(
+            ids,
+            uid,
+            dir,
+            game.finishedPlayers || {}
+        );
+        game.turnVersion = (game.turnVersion || 0) + 1;
+        game.lastActionId = actionId;
+        game.lastAction = {
+            type: "draw",
+            uid,
+            actionId,
+            at: Date.now()
+        };
+        game.turnEndsAt = Date.now() + 30000;
         game.updatedAt = Date.now();
         return game;
     });
 
     if (!result.committed) {
-        throw new Error("Tidak bisa draw (bukan giliran / pile kosong)");
+        throw new Error("Tidak bisa draw (bukan giliran / sudah selesai / pile kosong)");
     }
 
     const g = result.snapshot.val();
-    if (g?._drawnCard?.card && g._drawnCard.uid === uid) {
+
+    // Merge pendingHands → hand privat (idempotent)
+    const pendingList = g?.pendingHands?.[uid];
+    if (Array.isArray(pendingList) && pendingList.length) {
         const h = (await get(handRef(roomId, uid))).val() || [];
-        await set(handRef(roomId, uid), [...h, g._drawnCard.card]);
-        await update(gameRef(roomId), { _drawnCard: null });
+        const have = new Set(h.map((c) => c?.id));
+        const merged = [...h];
+        for (const c of pendingList) {
+            if (c?.id && !have.has(c.id)) {
+                merged.push(c);
+                have.add(c.id);
+            }
+        }
+        await set(handRef(roomId, uid), merged);
+        // clear pending for this uid
+        await update(gameRef(roomId), {
+            [`pendingHands/${uid}`]: null
+        });
+    } else if (reservedCard) {
+        // fallback
+        const h = (await get(handRef(roomId, uid))).val() || [];
+        if (!h.some((c) => c?.id === reservedCard.id)) {
+            await set(handRef(roomId, uid), [...h, reservedCard]);
+        }
     }
+
     return (await get(gameRef(roomId))).val();
 }

@@ -87,6 +87,7 @@ let currentRoomId = null;
 let currentRoomCode = null;
 let roomUnsubscribe = null;
 let soloGame = null;
+let actionInFlight = false;
 let chatCleanup = null;
 let voiceMuted = false;
 let presenceCleanup = null;
@@ -636,6 +637,7 @@ function enterMultiplayerMatch(roomId, room) {
                     const handSnap = await get(
                         ref(database, `rooms/${roomId}/hands/${turn}`)
                     );
+                    if (state.finishedPlayers?.[turn]) return;
                     const botHand = handSnap.exists() ? handSnap.val() : [];
                     const oppCounts = Object.entries(state.handCounts || {})
                         .filter(([id]) => id !== turn)
@@ -750,6 +752,12 @@ function enterMultiplayerMatch(roomId, room) {
                 },
                 {
                     onPlayCard: async (cardId, chosenColor = null) => {
+                        if (actionInFlight) return;
+                        if (publicState?.finishedPlayers?.[currentUser.uid]) {
+                            showNotification("Kamu sudah selesai");
+                            return;
+                        }
+                        actionInFlight = true;
                         try {
                             let color = chosenColor;
                             if (!color) {
@@ -768,21 +776,33 @@ function enterMultiplayerMatch(roomId, room) {
                                 cardId,
                                 color
                             );
-                            sfx.playCard();
-                            hapticSuccess();
+                            try { sfx.playCard(); } catch (_) {}
+                            try { hapticSuccess(); } catch (_) {}
                         } catch (e) {
-                            sfx.error();
+                            try { sfx.error(); } catch (_) {}
                             showNotification(e.message);
+                        } finally {
+                            actionInFlight = false;
                         }
                     },
                     onDraw: async () => {
+                        if (actionInFlight) return;
+                        if (publicState?.finishedPlayers?.[currentUser.uid]) {
+                            showNotification("Kamu sudah selesai");
+                            return;
+                        }
+                        actionInFlight = true;
                         try {
-                            await drawCardOnline(roomId, currentUser.uid);
-                            playDrawAnimation(1);
-                            sfx.draw();
+                            await drawCardOnline(roomId, currentUser.uid, {
+                                turnVersion: publicState?.turnVersion ?? null
+                            });
+                            try { playDrawAnimation(1); } catch (_) {}
+                            try { sfx.draw(); } catch (_) {}
                         } catch (e) {
-                            sfx.error();
+                            try { sfx.error(); } catch (_) {}
                             showNotification(e.message);
+                        } finally {
+                            actionInFlight = false;
                         }
                     },
                     onUno: async () => {

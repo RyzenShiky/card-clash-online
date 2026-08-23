@@ -390,3 +390,42 @@ body.xray-on .opponent-chip {
     0 0 12px 3px rgba(255, 214, 0, 0.7),
     0 6px 14px rgba(0, 0, 0, 0.35);
 }
+
+/* Wild rainbow (belum pilih warna) */
+.card-face.wild.rainbow {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%) !important;
+}
+.center-ellipse.wild-quad {
+  position: relative;
+  overflow: hidden;
+  background: #fff !important;
+}
+.center-ellipse.wild-quad .wq {
+  position: absolute;
+  width: 50%;
+  height: 50%;
+}
+.wq-r { top: 0; left: 0; background: #ef4444; }
+.wq-b { top: 0; right: 0; background: #3b82f6; }
+.wq-y { bottom: 0; left: 0; background: #eab308; }
+.wq-g { bottom: 0; right: 0; background: #22c55e; }
+.center-ellipse.wild-quad .wild-val {
+  position: relative;
+  z-index: 2;
+  color: #111 !important;
+  text-shadow: 0 0 4px #fff, 0 0 2px #fff;
+  transform: rotate(25deg);
+  font-size: 1.4rem;
+}
+
+/* Desktop: pastikan hand tidak collaps */
+.hand-fan {
+  min-height: 150px !important;
+}
+.hand-fan-scroll {
+  min-height: 120px !important;
+}
+.card-slot {
+  min-width: 64px;
+  min-height: 92px;
+}

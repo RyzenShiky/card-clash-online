@@ -5,7 +5,7 @@
  *  1. Cari antrean room waiting (pemain manusia online)
  *  2. Jika tidak ada → buat room antrean
  *  3. Tunggu SEARCH_WAIT_MS untuk manusia lain
- *  4. Jika masih sepi → isi bot otomatis sampai 6
+ *  4. Jika masih sepi → isi bot otomatis sampai 4
  *  5. Pemain tekan Ready → jika 6/6 & semua manusia ready → auto-start (tanpa tombol Start host)
  */
 import {

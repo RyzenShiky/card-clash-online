@@ -174,16 +174,18 @@ export class HandController {
 
         slot.addEventListener("pointerup", (e) => {
             const dy = downY - e.clientY;
-            // Tap atau swipe up → play; hitbox slot tidak di-transform
-            if (!moved || dy > 40) {
-                this.onPlay(card.id);
+            const id = slot.dataset.cardId;
+            // Tap atau swipe up → play
+            if (id && (!moved || dy > 40)) {
+                this.onPlay(id);
             }
         });
 
         slot.addEventListener("keydown", (e) => {
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                this.onPlay(card.id);
+                const id = slot.dataset.cardId;
+                if (id) this.onPlay(id);
             }
         });
 
