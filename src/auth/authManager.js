@@ -28,12 +28,20 @@ googleProvider.setCustomParameters({ prompt: "select_account" });
  * Tidak auto sign-in anonymous.
  * @returns {Promise<import("firebase/auth").User|null>}
  */
-export function waitForAuthState() {
+export function waitForAuthState(timeoutMs = 6000) {
     return new Promise((resolve) => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            unsubscribe();
+        let done = false;
+        const finish = (user) => {
+            if (done) return;
+            done = true;
+            try {
+                unsubscribe();
+            } catch (_) {}
             resolve(user);
-        });
+        };
+        const unsubscribe = onAuthStateChanged(auth, (user) => finish(user));
+        // HP lambat / jaringan jelek: jangan stuck di "Memulai…" selamanya
+        setTimeout(() => finish(auth.currentUser || null), timeoutMs);
     });
 }
 

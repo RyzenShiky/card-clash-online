@@ -1,5 +1,5 @@
 /* Card Clash SW v6 — stale-while-revalidate + cache-first untuk aset statis */
-const CACHE = "card-clash-v6";
+const CACHE = "card-clash-v7";
 const PRECACHE = [
   "./",
   "./index.html",

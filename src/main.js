@@ -155,33 +155,7 @@ async function boot() {
 async function startAuthenticatedSession(user) {
     currentUser = user;
 
-    try {
-        await createPlayerProfile(user);
-    } catch (e) {
-        // RTDB belum dibuat / rules ketat — tetap lanjut UI
-        logger.warn("[Boot] Profile create failed (check RTDB):", e.message);
-    }
-
-    if (presenceCleanup) presenceCleanup();
-    try {
-        presenceCleanup = initializePresence(user.uid, {
-            onOnline: (sessionId) => {
-                if (currentRoomId) {
-                    markConnected(currentRoomId, user.uid, sessionId).catch(() => {});
-                }
-            },
-            onOffline: () => {
-                if (currentRoomId) {
-                    markReconnecting(currentRoomId, user.uid, DEFAULT_GRACE_MS).catch(
-                        () => {}
-                    );
-                }
-            }
-        });
-    } catch (e) {
-        logger.warn("[Boot] Presence failed:", e.message);
-    }
-
+    // Tampilkan menu DULU — profile/presence di background (HP lebih cepat)
     hideAuthScreen();
     installVisibilityGuards();
 
@@ -197,7 +171,6 @@ async function startAuthenticatedSession(user) {
         isAnonymousUser(user) ? "(Guest)" : "(Google)"
     );
 
-    // Listen logout / account change
     if (authUnsub) authUnsub();
     authUnsub = onAuthChange((u) => {
         if (!u) {
@@ -213,6 +186,34 @@ async function startAuthenticatedSession(user) {
     });
 
     startApplication();
+
+    // Background: jangan block UI
+    createPlayerProfile(user).catch((e) =>
+        logger.warn("[Boot] Profile create failed (check RTDB):", e.message)
+    );
+    queueMicrotask(() => {
+        try {
+            if (presenceCleanup) presenceCleanup();
+            presenceCleanup = initializePresence(user.uid, {
+                onOnline: (sessionId) => {
+                    if (currentRoomId) {
+                        markConnected(currentRoomId, user.uid, sessionId).catch(() => {});
+                    }
+                },
+                onOffline: () => {
+                    if (currentRoomId) {
+                        markReconnecting(
+                            currentRoomId,
+                            user.uid,
+                            DEFAULT_GRACE_MS
+                        ).catch(() => {});
+                    }
+                }
+            });
+        } catch (e) {
+            logger.warn("[Boot] Presence failed:", e.message);
+        }
+    });
 }
 
 function startApplication() {

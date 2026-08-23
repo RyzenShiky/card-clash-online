@@ -9,15 +9,16 @@
     <meta property="og:description" content="Online card arena — ranked matchmaking, bots, leaderboard.">
     <meta property="og:type" content="website">
     <meta property="og:image" content="./icons/icon-512.svg">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Card Clash">
-    <meta name="twitter:description" content="Online card arena by RyzenShiky">
-    <meta name="twitter:image" content="./icons/icon-512.svg">
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="./icons/icon-192.svg">
     <title>Card Clash</title>
+    <!-- Preconnect Firebase CDN (HP lebih cepat) -->
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="dns-prefetch" href="https://www.gstatic.com">
+    <link rel="preconnect" href="https://firebase.googleapis.com" crossorigin>
     <link rel="stylesheet" href="./src/styles/main.css">
+    <link rel="modulepreload" href="./src/entry.js?v=7">
 </head>
 <body>
     <div id="app">
@@ -30,12 +31,16 @@
         <div id="game-screen" class="screen hidden"></div>
     </div>
 
-    <script type="module" src="./src/main.js?v=6"></script>
+    <script type="module" src="./src/entry.js?v=7"></script>
     <script>
+      // SW jangan blok first paint — daftar setelah idle
       if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register("./sw.js?v=6").catch(() => {});
-        });
+        const reg = () => navigator.serviceWorker.register("./sw.js?v=7").catch(() => {});
+        if ("requestIdleCallback" in window) {
+          requestIdleCallback(reg, { timeout: 4000 });
+        } else {
+          window.addEventListener("load", () => setTimeout(reg, 1500));
+        }
       }
     </script>
 </body>
