@@ -4,7 +4,7 @@ const LABEL = {
   skip: "⊘",
   reverse: "⇄",
   draw2: "+2",
-  wild: "W",
+  wild: "WILD",
   wild_draw4: "+4"
 };
 

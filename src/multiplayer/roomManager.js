@@ -53,7 +53,9 @@ export async function createRoom(user, settings = {}) {
                 uid: user.uid,
                 ready: false,
                 connected: true,
-                joinedAt: now
+                status: "active",
+                joinedAt: now,
+                reconnectUntil: null
             }
         }
     };
@@ -129,9 +131,11 @@ export async function joinRoomByCode(user, code) {
     const maxPlayers = room.settings?.maxPlayers ?? 4;
 
     if (players[user.uid]) {
-        // sudah anggota → reconnect flag
+        // sudah anggota → restore connection (reconnect path)
         await update(ref(database, `rooms/${roomId}/players/${user.uid}`), {
-            connected: true
+            connected: true,
+            status: "active",
+            reconnectUntil: null
         });
     } else {
         if (Object.keys(players).length >= maxPlayers) {
@@ -142,7 +146,9 @@ export async function joinRoomByCode(user, code) {
                 uid: user.uid,
                 ready: false,
                 connected: true,
-                joinedAt: Date.now()
+                status: "active",
+                joinedAt: Date.now(),
+                reconnectUntil: null
             });
         } catch (err) {
             console.warn("[CardClash] JOIN set player error:", err.code, err.message);
@@ -226,10 +232,13 @@ export async function startMatch(roomId, hostUid) {
     const players = room.players || {};
     const ids = Object.keys(players);
     if (ids.length < 2) {
-        throw new Error("Minimal 2 pemain untuk start.");
+        throw new Error("Minimal 2 pemain untuk start (isi bot jika sepi).");
     }
 
-    const notReady = ids.filter((id) => !players[id]?.ready);
+    // Bots always ready
+    const notReady = ids.filter(
+        (id) => !players[id]?.ready && !players[id]?.isBot
+    );
     if (notReady.length > 0) {
         throw new Error("Semua pemain harus Ready dulu.");
     }
@@ -251,10 +260,11 @@ export async function setReady(roomId, uid, ready) {
 
 export function subscribeRoom(roomId, callback) {
     const roomRef = ref(database, `rooms/${roomId}`);
-    onValue(roomRef, (snap) => {
+    const handler = (snap) => {
         callback(snap.exists() ? snap.val() : null);
-    });
-    return () => off(roomRef);
+    };
+    onValue(roomRef, handler);
+    return () => off(roomRef, "value", handler);
 }
 
 export async function getRoom(roomId) {

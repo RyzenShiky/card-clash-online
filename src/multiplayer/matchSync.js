@@ -383,9 +383,13 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
 
     let g = result.snapshot.val();
 
-    // Auto-beri +2/+4 ke korban
-    if (g?._forceDraw?.n) {
-        g = await giveCardsFromPile(roomId, g, g._forceDraw.uid, g._forceDraw.n);
+    // Auto-beri +2/+4 ke korban (sekali saja — guard _forceDraw null setelah apply)
+    if (g?._forceDraw?.n && g._forceDraw.uid) {
+        const forceUid = g._forceDraw.uid;
+        const forceN = g._forceDraw.n;
+        // Clear flag dulu agar retry/listener tidak double-apply
+        await update(gameRef(roomId), { _forceDraw: null });
+        g = await giveCardsFromPile(roomId, g, forceUid, forceN);
     }
 
     if (g?.status === "round_end" && g.roundWinner) {

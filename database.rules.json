@@ -2,13 +2,12 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "players": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid",
-
         "public": {
+          ".read": "auth != null",
           "displayName": {
             ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 32"
           },
@@ -19,14 +18,19 @@
             ".validate": "newData.val() === 'guest' || newData.val() === 'google'"
           }
         },
-
+        "stats": {
+          ".read": "auth != null"
+        },
         "private": {
           ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "ranked": {
+          ".read": "auth != null",
           ".write": "auth != null && auth.uid === $uid"
         }
       }
     },
-
     "presence": {
       "$uid": {
         ".read": "auth != null",
@@ -36,26 +40,22 @@
         }
       }
     },
-
     "playerRooms": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid"
       }
     },
-
     "roomCodes": {
       "$code": {
         ".read": "auth != null",
         ".write": "auth != null"
       }
     },
-
     "rooms": {
       "$roomId": {
         ".read": "auth != null",
         ".write": "auth != null",
-
         "meta": {
           "status": {
             ".validate": "newData.val() === 'waiting' || newData.val() === 'starting' || newData.val() === 'playing' || newData.val() === 'paused' || newData.val() === 'finished' || newData.val() === 'closed'"
@@ -64,13 +64,11 @@
             ".validate": "newData.isString() && newData.val().length === 6"
           }
         },
-
         "settings": {
           "maxPlayers": {
             ".validate": "newData.isNumber() && newData.val() >= 2 && newData.val() <= 4"
           }
         },
-
         "players": {
           "$uid": {
             "uid": {
@@ -83,14 +81,20 @@
         }
       }
     },
-
+    "leaderboard": {
+      "wins": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
     "matches": {
       "$matchId": {
         ".read": "auth != null",
         ".write": false
       }
     },
-
     "privateGameData": {
       "$matchId": {
         "$uid": {
@@ -99,13 +103,20 @@
         }
       }
     },
-
     "matchmaking": {
       "$queue": {
-        "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid"
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "$roomId": {
+          ".read": "auth != null",
+          ".write": "auth != null"
         }
+      }
+    },
+    "ruleCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null"
       }
     }
   }

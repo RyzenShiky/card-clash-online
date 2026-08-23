@@ -16,6 +16,12 @@ import { createPlayerProfile } from "./auth/playerProfile.js";
 import { secureAccountWithGoogle } from "./auth/accountLinking.js";
 import { initializePresence } from "./multiplayer/presence.js";
 import {
+    markReconnecting,
+    markConnected,
+    DEFAULT_GRACE_MS
+} from "./multiplayer/reconnect.js";
+import { listenerManager } from "./multiplayer/listenerManager.js";
+import {
     createRoom,
     joinRoomByCode,
     leaveRoom,
@@ -23,6 +29,10 @@ import {
     subscribeRoom,
     startMatch
 } from "./multiplayer/roomManager.js";
+import { findQuickMatch, fillBots, clearFromQueue } from "./multiplayer/matchmaking.js";
+import { applyRankedResult, ensureRankedProfile } from "./multiplayer/ranked.js";
+import { logEvent, logMatchStart, logMatchEnd } from "./multiplayer/matchReplay.js";
+import { chooseBotAction } from "./game/botAI.js";
 import { showAuthScreen, hideAuthScreen } from "./ui/authUI.js";
 import { renderMenu, renderOnlineMenu } from "./ui/menuUI.js";
 import { renderLobby, promptJoinCode } from "./ui/lobbyUI.js";
@@ -50,8 +60,13 @@ import {
     toggleMuteMic,
     isVoiceAvailable
 } from "./multiplayer/voiceChat.js";
-import { chooseBotAction } from "./game/botAI.js";
 import { logger } from "./utils/logger.js";
+
+/** Pending custom rules from Rules Creator */
+let pendingCustomRules = null;
+/** Current match mode: casual | ranked */
+let currentMatchMode = "casual";
+
 
 let currentUser = null;
 let currentRoomId = null;
@@ -134,7 +149,20 @@ async function startAuthenticatedSession(user) {
 
     if (presenceCleanup) presenceCleanup();
     try {
-        presenceCleanup = initializePresence(user.uid);
+        presenceCleanup = initializePresence(user.uid, {
+            onOnline: (sessionId) => {
+                if (currentRoomId) {
+                    markConnected(currentRoomId, user.uid, sessionId).catch(() => {});
+                }
+            },
+            onOffline: () => {
+                if (currentRoomId) {
+                    markReconnecting(currentRoomId, user.uid, DEFAULT_GRACE_MS).catch(
+                        () => {}
+                    );
+                }
+            }
+        });
     } catch (e) {
         logger.warn("[Boot] Presence failed:", e.message);
     }
@@ -185,20 +213,19 @@ function startApplication() {
     });
 }
 
-function showProfileInfo() {
+async function showProfileInfo() {
     if (!currentUser) return;
-    const type = isAnonymousUser(currentUser) ? "Guest" : "Google";
-    const name = currentUser.displayName || currentUser.uid.slice(0, 10);
-    if (isAnonymousUser(currentUser)) {
-        if (window.confirm("Upgrade Guest → Google sekarang? Progress tetap di akun yang sama.")) {
-            secureAccountWithGoogle()
-                .then((u) => {
-                    currentUser = u;
-                    showNotification("Akun berhasil diamankan dengan Google!");
-                })
-                .catch((e) => showNotification(e.message || "Gagal link akun"));
-        }
-    } else {
+    try {
+        const { openProfileModal } = await import("./ui/profileUI.js");
+        await openProfileModal(currentUser, {
+            onUpdated: (u) => {
+                if (u) currentUser = u;
+            }
+        });
+    } catch (e) {
+        logger.warn(e);
+        const type = isAnonymousUser(currentUser) ? "Guest" : "Google";
+        const name = currentUser.displayName || currentUser.uid.slice(0, 10);
         showNotification(name + " · " + type);
     }
 }
@@ -207,23 +234,70 @@ function showOnlineMenu() {
     showScreen("menu");
     renderOnlineMenu(screens.menu(), {
         onBack: startApplication,
-        onQuick: () =>
-            showNotification("Quick Match belum diimplementasi. Gunakan Create/Join Room."),
+        onQuick: () => handleMatchmaking("casual"),
+        onRanked: () => handleMatchmaking("ranked"),
         onCreate: handleCreateRoom,
-        onJoin: handleJoinRoom
+        onJoin: handleJoinRoom,
+        onRules: async () => {
+            const { openRulesCreator } = await import("./ui/rulesUI.js");
+            const rules = await openRulesCreator(currentUser);
+            if (rules) {
+                pendingCustomRules = rules;
+                showNotification("Rules siap dipakai saat Create / Ranked");
+            }
+        },
+        onLeaderboard: async () => {
+            const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
+            openLeaderboardModal();
+        }
     });
+}
+
+async function handleMatchmaking(mode) {
+    if (!currentUser) return;
+    try {
+        showNotification(mode === "ranked" ? "Mencari Ranked…" : "Quick Match…");
+        if (mode === "ranked") await ensureRankedProfile(currentUser.uid);
+        const opts = {
+            mode,
+            maxPlayers: 4,
+            botFill: true,
+            customRules: pendingCustomRules || undefined
+        };
+        const { roomId, roomCode } = await findQuickMatch(currentUser, opts);
+        currentRoomId = roomId;
+        currentRoomCode = roomCode;
+        currentMatchMode = mode;
+        enterLobby(roomId, roomCode);
+    } catch (err) {
+        logger.error(err);
+        showNotification(err.message || "Matchmaking gagal");
+    }
 }
 
 async function handleCreateRoom() {
     if (!currentUser) return;
     try {
         showNotification("Membuat room...");
-        const { roomId, roomCode } = await createRoom(currentUser, {
-            maxPlayers: 4,
-            isPrivate: true
-        });
+        const settings = {
+            maxPlayers: pendingCustomRules?.maxPlayers ?? 4,
+            isPrivate: true,
+            turnTimer: pendingCustomRules?.turnTimer ?? 30,
+            targetScore: pendingCustomRules?.targetScore ?? 500,
+            botFill: true,
+            customRules: pendingCustomRules || {
+                drawStacking: false,
+                sevenSwap: false,
+                zeroRotation: false,
+                forcePlay: false,
+                challengeDraw: true,
+                callLastCard: true
+            }
+        };
+        const { roomId, roomCode } = await createRoom(currentUser, settings);
         currentRoomId = roomId;
         currentRoomCode = roomCode;
+        currentMatchMode = "casual";
         enterLobby(roomId, roomCode);
     } catch (err) {
         logger.error(err);
@@ -249,11 +323,22 @@ async function handleJoinRoom() {
 }
 
 function enterLobby(roomId, roomCode) {
-    if (roomUnsubscribe) roomUnsubscribe();
+    if (roomUnsubscribe) {
+        roomUnsubscribe();
+        roomUnsubscribe = null;
+    }
+    cleanupMatchSubs();
+    const gen = listenerManager.setActiveRoom(roomId);
 
     showScreen("lobby");
 
+    // Restore connection flag when entering/re-entering lobby
+    markConnected(roomId, currentUser.uid).catch(() => {});
+
     roomUnsubscribe = subscribeRoom(roomId, (room) => {
+        if (!listenerManager.isCurrent(roomId, gen) && listenerManager.activeRoomId !== roomId) {
+            return;
+        }
         if (!room) {
             showNotification("Room ditutup");
             leaveCurrentRoom();
@@ -284,15 +369,32 @@ function enterLobby(roomId, roomCode) {
                 onStart: async () => {
                     try {
                         showNotification("Memulai pertandingan...");
+                        const mode = room.meta?.mode || currentMatchMode || "casual";
+                        await clearFromQueue(roomId, mode);
                         await startMatch(roomId, currentUser.uid);
                     } catch (e) {
                         showNotification(e.message || "Gagal start");
                         logger.error(e);
                     }
                 },
+                onFillBots: async () => {
+                    try {
+                        showNotification("Mengisi bot…");
+                        await fillBots(roomId, currentUser.uid, room.settings?.maxPlayers ?? 4);
+                        showNotification("Bot ditambahkan");
+                    } catch (e) {
+                        showNotification(e.message || "Gagal fill bot");
+                    }
+                },
                 onNotify: showNotification
             }
         );
+    });
+    listenerManager.add(roomId, () => {
+        if (roomUnsubscribe) {
+            roomUnsubscribe();
+            roomUnsubscribe = null;
+        }
     });
 }
 
@@ -303,10 +405,12 @@ async function leaveCurrentRoom() {
     }
     try { await leaveVoiceChannel(); } catch (_) {}
     document.getElementById("btn-mic")?.remove();
+    cleanupMatchSubs();
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
     }
+    listenerManager.clearAll();
     if (currentRoomId && currentUser) {
         try {
             await leaveRoom(currentUser.uid, currentRoomId);
@@ -329,6 +433,9 @@ function cleanupMatchSubs() {
         } catch (_) {}
     });
     matchUnsubs = [];
+    if (currentRoomId) {
+        listenerManager.clear(`match:${currentRoomId}`);
+    }
 }
 
 function enterMultiplayerMatch(roomId, room) {
@@ -365,20 +472,71 @@ function enterMultiplayerMatch(roomId, room) {
                     stacking: room.settings?.customRules?.drawStacking ?? false,
                     turnTimer: room.settings?.turnTimer ?? 30
                 });
+                await logMatchStart(roomId, playerIds, room.settings);
             } catch (e) {
                 logger.error(e);
                 showNotification(e.message || "Gagal init match");
             }
         }
 
+        let rankedApplied = false;
+        let botTimer = null;
+
+        const runOnlineBotIfNeeded = async (state) => {
+            if (!isHost || !state || state.status !== "playing" || state.winner) return;
+            const turn = state.currentTurn;
+            if (!turn || !String(turn).startsWith("bot-")) return;
+            if (botTimer) return;
+            botTimer = setTimeout(async () => {
+                botTimer = null;
+                try {
+                    const { get } = await import(
+                        "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js"
+                    );
+                    const { database } = await import("./firebase/services.js");
+                    const { ref } = await import(
+                        "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js"
+                    );
+                    const handSnap = await get(
+                        ref(database, `rooms/${roomId}/hands/${turn}`)
+                    );
+                    const botHand = handSnap.exists() ? handSnap.val() : [];
+                    const action = chooseBotAction(
+                        botHand,
+                        state.topCard,
+                        state.currentColor,
+                        "normal"
+                    );
+                    if (action.type === "play") {
+                        await playCardOnline(roomId, turn, action.cardId, action.color);
+                        logEvent(roomId, {
+                            type: "play",
+                            uid: turn,
+                            card: { id: action.cardId, value: "?", color: action.color }
+                        });
+                    } else {
+                        await drawCardOnline(roomId, turn);
+                        logEvent(roomId, { type: "draw", uid: turn });
+                    }
+                } catch (e) {
+                    logger.warn("[Bot] turn failed:", e.message);
+                }
+            }, 700);
+        };
+
         cleanupMatchSubs();
+        const matchGen = listenerManager.generation;
+        const matchKey = `match:${roomId}`;
 
         let publicState = null;
         let hand = [];
 
         const render = () => {
             if (!publicState) return;
+            if (listenerManager.activeRoomId !== roomId) return;
 
+            // Merge reconnect status from room.players into view
+            const roomPlayers = room.players || {};
             const view = {
                 status: publicState.status,
                 topCard: publicState.topCard,
@@ -391,7 +549,9 @@ function enterMultiplayerMatch(roomId, room) {
                     0,
                 players: (publicState.playerIds || playerIds).map((uid) => ({
                     uid,
-                    handCount: publicState.handCounts?.[uid] ?? 0
+                    handCount: publicState.handCounts?.[uid] ?? 0,
+                    connected: roomPlayers[uid]?.connected !== false,
+                    status: roomPlayers[uid]?.status || "active"
                 })),
                 winner: publicState.winner,
                 scores: publicState.scores,
@@ -508,29 +668,50 @@ function enterMultiplayerMatch(roomId, room) {
                         : "Pemenang: " +
                           String(publicState.winner).slice(0, 8);
                 showNotification(msg);
+                if (isHost && !rankedApplied) {
+                    rankedApplied = true;
+                    const mode = room.meta?.mode || currentMatchMode;
+                    logMatchEnd(roomId, publicState.winner, publicState.scores);
+                    if (mode === "ranked") {
+                        applyRankedResult(
+                            publicState.playerIds || playerIds,
+                            publicState.winner
+                        ).catch((e) => logger.warn(e));
+                    }
+                    // Offer replay
+                    setTimeout(async () => {
+                        if (window.confirm("Lihat Match Replay?")) {
+                            const { openReplayModal } = await import("./ui/replayUI.js");
+                            openReplayModal(roomId);
+                        }
+                    }, 800);
+                }
             }
         };
 
-        matchUnsubs.push(
-            subscribePublic(roomId, (state) => {
-                const prevAnim = publicState?.lastAnim?.at;
-                publicState = state;
-                if (state?.lastAnim?.at && state.lastAnim.at !== prevAnim) {
-                    showDrawPenaltyAnim(
-                        state.lastAnim.n || 0,
-                        state.lastAnim.uid === currentUser.uid
-                    );
-                    sfx.draw();
-                }
-                render();
-            })
-        );
-        matchUnsubs.push(
-            subscribeHand(roomId, currentUser.uid, (h) => {
-                hand = Array.isArray(h) ? h : [];
-                render();
-            })
-        );
+        const unsubPublic = subscribePublic(roomId, (state) => {
+            if (listenerManager.activeRoomId !== roomId) return;
+            const prevAnim = publicState?.lastAnim?.at;
+            publicState = state;
+            if (state?.lastAnim?.at && state.lastAnim.at !== prevAnim) {
+                // Debounce anim: only once per lastAnim.at
+                showDrawPenaltyAnim(
+                    state.lastAnim.n || 0,
+                    state.lastAnim.uid === currentUser.uid
+                );
+                sfx.draw();
+            }
+            render();
+            runOnlineBotIfNeeded(state);
+        });
+        const unsubHand = subscribeHand(roomId, currentUser.uid, (h) => {
+            if (listenerManager.activeRoomId !== roomId) return;
+            hand = Array.isArray(h) ? h : [];
+            render();
+        });
+        matchUnsubs.push(unsubPublic, unsubHand);
+        listenerManager.add(matchKey, unsubPublic);
+        listenerManager.add(matchKey, unsubHand);
     };
 
     boot();

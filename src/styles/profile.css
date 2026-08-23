@@ -1,0 +1,122 @@
+.profile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.profile-modal-card {
+  width: min(420px, 100%);
+  background: #1c1c1e;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  color: #f5f5f7;
+  overflow: hidden;
+}
+.profile-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.profile-modal-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.profile-modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.profile-identity {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+}
+.profile-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #007aff, #5856d6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.35rem;
+}
+.profile-name {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.profile-meta {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-top: 0.15rem;
+}
+.profile-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+.profile-field input {
+  background: #2c2c2e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 0.65rem 0.85rem;
+  color: #fff;
+  font-size: 1rem;
+}
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.profile-stats > div {
+  background: #2c2c2e;
+  border-radius: 10px;
+  padding: 0.65rem 0.4rem;
+  text-align: center;
+}
+.profile-stats strong {
+  display: block;
+  font-size: 1.05rem;
+}
+.profile-stats span {
+  font-size: 0.7rem;
+  opacity: 0.65;
+}
+.profile-modal-footer {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.85rem 1.25rem 1.15rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lb-list { display: flex; flex-direction: column; gap: 0.4rem; max-height: 50vh; overflow-y: auto; }
+.lb-row {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  background: #2c2c2e;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.lb-rank { opacity: 0.7; font-weight: 700; }
+.lb-wins { font-weight: 700; color: #ffd60a; }
+.lb-tier { font-size: 0.75rem; opacity: 0.75; }
+.rules-featured { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.rules-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; margin: 0.25rem 0; }
+.replay-timeline { max-height: 45vh; overflow-y: auto; font-size: 0.85rem; }
+.replay-line { padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.replay-i { opacity: 0.5; margin-right: 0.4rem; }
+.player-item.reconnecting, .opponent-chip.reconnecting { opacity: 0.65; }

@@ -97,6 +97,27 @@
 .card-face.green .card-value { color: #15732e !important; }
 .card-face.yellow .card-value { color: #a66a00 !important; }
 
+/* Wild di hand tetap hitam; setelah pilih warna (discard) ikut warna aktif */
+.card-face.wild .card-value,
+.card-face.null .card-value { color: #1c1c1e !important; }
+.card-face.wild.red .card-value,
+.card-face.null.red .card-value { color: #c1121f !important; }
+.card-face.wild.blue .card-value,
+.card-face.null.blue .card-value { color: #004080 !important; }
+.card-face.wild.green .card-value,
+.card-face.null.green .card-value { color: #15732e !important; }
+.card-face.wild.yellow .card-value,
+.card-face.null.yellow .card-value { color: #a66a00 !important; }
+
+.card-face .card-value {
+  font-size: 1.25rem;
+}
+.card-face.wild .card-value,
+.card-face.null .card-value {
+  font-size: 0.85rem;
+  letter-spacing: -0.02em;
+}
+
 .card-face .corner {
   position: absolute;
   font-family: "Arial Black", sans-serif;

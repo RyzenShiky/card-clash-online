@@ -49,16 +49,21 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
             <div class="opponents-row">
                 ${opponents
                     .map(
-                        (p) => `
-                    <div class="opponent-chip ${p.uid === publicState?.currentTurn ? "active-turn" : ""}">
-                        ${p.uid.slice(0, 6)}… · 🂠 ${p.handCount ?? "?"}
+                        (p) => {
+                            const recon =
+                                p.status === "reconnecting" || p.connected === false
+                                    ? " · 🔄"
+                                    : "";
+                            return `
+                    <div class="opponent-chip ${p.uid === publicState?.currentTurn ? "active-turn" : ""} ${p.status === "reconnecting" ? "reconnecting" : ""}">
+                        ${p.uid.slice(0, 6)}… · 🂠 ${p.handCount ?? "?"}${recon}
                         ${
                             publicState?.handCounts?.[p.uid] === 1
                                 ? `<button class="btn btn-danger btn-cek-uno" data-challenge-uno="${p.uid}">Cek UNO</button>`
                                 : ""
                         }
-                    </div>
-                `
+                    </div>`;
+                        }
                     )
                     .join("")}
             </div>
@@ -71,7 +76,14 @@ export function renderGame(container, { publicState, hand, currentUid }, handler
                 <div class="discard-zone">
                     ${
                         discardCard
-                            ? renderCardHTML(discardCard, { discard: true })
+                            ? renderCardHTML(discardCard, {
+                                  discard: true,
+                                  activeColor:
+                                      discardCard.value === "wild" ||
+                                      discardCard.value === "wild_draw4"
+                                          ? publicState?.currentColor || discardCard.color
+                                          : null
+                              })
                             : "<div class='card-face wild discard'></div>"
                     }
                     <p class="color-badge color-${activeColor}">Warna: <b>${activeColor}</b></p>

@@ -30,15 +30,24 @@ export function renderOnlineMenu(container, handlers = {}) {
             <span class="text-muted">Multiplayer</span>
         </div>
 
-        <div class="menu-actions" style="margin-top:2rem">
+        <div class="menu-actions" style="margin-top:1.5rem">
             <button class="btn btn-primary" id="btn-quick">QUICK MATCH</button>
-            <button class="btn btn-accent" id="btn-create">CREATE ROOM</button>
+            <button class="btn btn-accent" id="btn-ranked">RANKED</button>
+            <button class="btn btn-secondary" id="btn-create">CREATE ROOM</button>
             <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
+            <button class="btn btn-secondary" id="btn-rules">CUSTOM RULES</button>
+            <button class="btn btn-secondary" id="btn-leaderboard">LEADERBOARD</button>
         </div>
+        <p class="text-muted" style="margin-top:1rem;font-size:0.8rem;text-align:center">
+          Ranked: max 4 · bot fill jika sepi · Warrior → Legend
+        </p>
     `;
 
     container.querySelector("#btn-back")?.addEventListener("click", () => handlers.onBack?.());
     container.querySelector("#btn-quick")?.addEventListener("click", () => handlers.onQuick?.());
+    container.querySelector("#btn-ranked")?.addEventListener("click", () => handlers.onRanked?.());
     container.querySelector("#btn-create")?.addEventListener("click", () => handlers.onCreate?.());
     container.querySelector("#btn-join")?.addEventListener("click", () => handlers.onJoin?.());
+    container.querySelector("#btn-rules")?.addEventListener("click", () => handlers.onRules?.());
+    container.querySelector("#btn-leaderboard")?.addEventListener("click", () => handlers.onLeaderboard?.());
 }
