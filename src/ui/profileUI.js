@@ -13,6 +13,7 @@ import { database, auth } from "../firebase/services.js";
 import { getPlayerProfile } from "../auth/playerProfile.js";
 import { isAnonymousUser } from "../auth/authManager.js";
 import { secureAccountWithGoogle } from "../auth/accountLinking.js";
+import { savePlayerProfile, subscribeProfile } from "../auth/profileStore.js";
 import { showNotification } from "./notificationUI.js";
 import { logger } from "../utils/logger.js";
 
@@ -251,19 +252,25 @@ export async function openProfileModal(user, handlers = {}) {
         }
 
         try {
-            const a = auth;
-            if (a?.currentUser) {
-                await updateAuthProfile(a.currentUser, { displayName: next });
-            }
-            await update(ref(database, `players/${user.uid}/public`), {
-                displayName: next,
-                avatarId: draftAvatar
-            });
-            await update(ref(database, `players/${user.uid}/private/settings`), {
-                sound: draftSound,
-                music: draftMusic,
-                language: draftLang
-            });
+            const roomId =
+                typeof handlers.getRoomId === "function"
+                    ? handlers.getRoomId()
+                    : handlers.roomId || null;
+
+            await savePlayerProfile(
+                user.uid,
+                {
+                    displayName: next,
+                    avatarId: draftAvatar,
+                    settings: {
+                        sound: draftSound,
+                        music: draftMusic,
+                        language: draftLang
+                    }
+                },
+                roomId
+            );
+
             try {
                 localStorage.setItem(
                     "cc_settings",
@@ -276,7 +283,10 @@ export async function openProfileModal(user, handlers = {}) {
             } catch (_) {}
 
             showNotification("Profile disimpan");
-            handlers.onUpdated?.(a?.currentUser || user);
+            handlers.onUpdated?.(auth?.currentUser || user, {
+                displayName: next,
+                avatarId: draftAvatar
+            });
             close();
         } catch (e) {
             logger.error(e);

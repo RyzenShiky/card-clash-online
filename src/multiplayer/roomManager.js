@@ -15,6 +15,19 @@ import {
 import { database } from "../firebase/services.js";
 import { createRoomCode, resolveRoomCode, deleteRoomCode } from "./roomCode.js";
 import { logger } from "../utils/logger.js";
+import { getDisplayName, getAvatarId } from "../auth/profileStore.js";
+
+function resolvePlayerLabel(user) {
+    const fromStore = getDisplayName(user.uid, null);
+    if (fromStore && fromStore !== "Player") return fromStore;
+    return (
+        user?.displayName ||
+        (user?.isAnonymous ? `Guest_${String(user.uid).slice(0, 6)}` : null) ||
+        String(user?.uid || "Player").slice(0, 10)
+    );
+}
+
+
 
 export async function createRoom(user, settings = {}) {
     const roomsRef = ref(database, "rooms");
@@ -51,6 +64,8 @@ export async function createRoom(user, settings = {}) {
         players: {
             [user.uid]: {
                 uid: user.uid,
+                displayName: resolvePlayerLabel(user),
+                avatarId: getAvatarId(user.uid),
                 ready: false,
                 connected: true,
                 status: "active",
@@ -135,7 +150,9 @@ export async function joinRoomByCode(user, code) {
         await update(ref(database, `rooms/${roomId}/players/${user.uid}`), {
             connected: true,
             status: "active",
-            reconnectUntil: null
+            reconnectUntil: null,
+            displayName: resolvePlayerLabel(user),
+            avatarId: getAvatarId(user.uid)
         });
     } else {
         if (Object.keys(players).length >= maxPlayers) {
@@ -144,11 +161,11 @@ export async function joinRoomByCode(user, code) {
         try {
             await set(ref(database, `rooms/${roomId}/players/${user.uid}`), {
                 uid: user.uid,
+                displayName: resolvePlayerLabel(user),
+                avatarId: getAvatarId(user.uid),
                 ready: false,
                 connected: true,
-                status: "active",
-                joinedAt: Date.now(),
-                reconnectUntil: null
+                joinedAt: Date.now()
             });
         } catch (err) {
             console.warn("[CardClash] JOIN set player error:", err.code, err.message);

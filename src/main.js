@@ -13,6 +13,11 @@ import {
     onAuthChange
 } from "./auth/authManager.js";
 import { createPlayerProfile } from "./auth/playerProfile.js";
+import {
+    subscribeProfile,
+    getDisplayName,
+    getAvatarId
+} from "./auth/profileStore.js";
 import { secureAccountWithGoogle } from "./auth/accountLinking.js";
 import { initializePresence } from "./multiplayer/presence.js";
 import {
@@ -280,8 +285,16 @@ async function showProfileInfo() {
     try {
         const { openProfileModal } = await import("./ui/profileUI.js");
         await openProfileModal(currentUser, {
-            onUpdated: (u) => {
+            getRoomId: () => currentRoomId,
+            onUpdated: (u, profilePatch) => {
                 if (u) currentUser = u;
+                // Lobby/game re-render via room listener + ProfileStore;
+                // paksa refresh displayName di room bila sedang in-room
+                if (profilePatch?.displayName && currentUser) {
+                    currentUser = Object.assign(currentUser, {
+                        displayName: profilePatch.displayName
+                    });
+                }
             }
         });
     } catch (e) {
