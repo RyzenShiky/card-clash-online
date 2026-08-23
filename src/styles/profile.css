@@ -120,3 +120,44 @@
 .replay-line { padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .replay-i { opacity: 0.5; margin-right: 0.4rem; }
 .player-item.reconnecting, .opponent-chip.reconnecting { opacity: 0.65; }
+
+.profile-modal-wide { max-width: 480px; }
+.profile-scroll { max-height: min(70vh, 560px); overflow-y: auto; }
+.profile-section { margin-top: 0.25rem; }
+.profile-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.profile-hint { font-size: 0.75rem; opacity: 0.8; }
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+.avatar-opt {
+  font-size: 1.5rem;
+  padding: 0.55rem;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background: #2c2c2e;
+  cursor: pointer;
+}
+.avatar-opt.selected {
+  border-color: #007aff;
+  background: #1a3a5c;
+}
+.profile-field select {
+  background: #2c2c2e;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  color: #fff;
+  font-size: 1rem;
+}
+.profile-avatar {
+  font-size: 1.75rem;
+  line-height: 1;
+}

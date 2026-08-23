@@ -8,18 +8,25 @@ export function renderMenu(container, handlers = {}) {
 
         <div class="menu-actions">
             <button class="btn btn-primary" id="btn-solo">PLAY SOLO</button>
-            <button class="btn btn-accent" id="btn-online">PLAY ONLINE</button>
+            <button class="btn btn-accent" id="btn-ranked-main">RANKED</button>
+            <button class="btn btn-secondary" id="btn-online">PLAY ONLINE</button>
         </div>
 
         <div class="menu-footer">
             <button class="btn btn-secondary" id="btn-profile">Profile</button>
+            <button class="btn btn-secondary" id="btn-leaderboard-main">Leaderboard</button>
             <button class="btn btn-secondary" id="btn-settings">Settings</button>
         </div>
+        <p class="text-muted" style="margin-top:0.75rem;font-size:0.75rem;text-align:center;opacity:0.8">
+          Ranked: Warrior → Legend · max 4 pemain
+        </p>
     `;
 
     container.querySelector("#btn-solo")?.addEventListener("click", () => handlers.onSolo?.());
+    container.querySelector("#btn-ranked-main")?.addEventListener("click", () => handlers.onRanked?.());
     container.querySelector("#btn-online")?.addEventListener("click", () => handlers.onOnline?.());
     container.querySelector("#btn-profile")?.addEventListener("click", () => handlers.onProfile?.());
+    container.querySelector("#btn-leaderboard-main")?.addEventListener("click", () => handlers.onLeaderboard?.());
     container.querySelector("#btn-settings")?.addEventListener("click", () => handlers.onSettings?.());
 }
 
@@ -31,8 +38,8 @@ export function renderOnlineMenu(container, handlers = {}) {
         </div>
 
         <div class="menu-actions" style="margin-top:1.5rem">
-            <button class="btn btn-primary" id="btn-quick">QUICK MATCH</button>
             <button class="btn btn-accent" id="btn-ranked">RANKED</button>
+            <button class="btn btn-primary" id="btn-quick">QUICK MATCH</button>
             <button class="btn btn-secondary" id="btn-create">CREATE ROOM</button>
             <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
             <button class="btn btn-secondary" id="btn-rules">CUSTOM RULES</button>

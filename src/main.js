@@ -168,6 +168,7 @@ async function startAuthenticatedSession(user) {
     }
 
     hideAuthScreen();
+    installVisibilityGuards();
 
     const loading = screens.loading();
     if (loading) {
@@ -689,25 +690,50 @@ function enterMultiplayerMatch(roomId, room) {
             }
         };
 
+        // Debounce UI render — cegah kartu kedip saat tab blur / reconnect burst
+        let renderTimer = null;
+        const scheduleRender = () => {
+            if (renderTimer) clearTimeout(renderTimer);
+            renderTimer = setTimeout(() => {
+                renderTimer = null;
+                render();
+            }, 40);
+        };
+
         const unsubPublic = subscribePublic(roomId, (state) => {
             if (listenerManager.activeRoomId !== roomId) return;
+            // Jangan wipe state dengan null sesaat (reconnect flicker)
+            if (!state) {
+                scheduleRender();
+                return;
+            }
             const prevAnim = publicState?.lastAnim?.at;
             publicState = state;
             if (state?.lastAnim?.at && state.lastAnim.at !== prevAnim) {
-                // Debounce anim: only once per lastAnim.at
                 showDrawPenaltyAnim(
                     state.lastAnim.n || 0,
                     state.lastAnim.uid === currentUser.uid
                 );
                 sfx.draw();
             }
-            render();
+            scheduleRender();
             runOnlineBotIfNeeded(state);
         });
         const unsubHand = subscribeHand(roomId, currentUser.uid, (h) => {
             if (listenerManager.activeRoomId !== roomId) return;
-            hand = Array.isArray(h) ? h : [];
-            render();
+            // Jangan kosongkan hand jika update transient null/[] padahal kita sudah punya kartu
+            // (umum di laptop saat tab sleep → Firebase reconnect)
+            if (Array.isArray(h) && h.length > 0) {
+                hand = h;
+            } else if (Array.isArray(h) && h.length === 0 && publicState?.handCounts?.[currentUser.uid] === 0) {
+                hand = [];
+            } else if (!Array.isArray(h) || h.length === 0) {
+                // keep previous hand until confirmed empty by handCounts
+                if ((publicState?.handCounts?.[currentUser.uid] ?? 99) === 0) {
+                    hand = [];
+                }
+            }
+            scheduleRender();
         });
         matchUnsubs.push(unsubPublic, unsubHand);
         listenerManager.add(matchKey, unsubPublic);
@@ -715,6 +741,32 @@ function enterMultiplayerMatch(roomId, room) {
     };
 
     boot();
+}
+
+/**
+ * Tab hidden / laptop sleep TIDAK boleh leave room.
+ * Hanya heartbeat & status soft.
+ */
+function installVisibilityGuards() {
+    if (window.__ccVisibilityInstalled) return;
+    window.__ccVisibilityInstalled = true;
+
+    document.addEventListener("visibilitychange", () => {
+        if (!currentRoomId || !currentUser) return;
+        if (document.visibilityState === "hidden") {
+            // Soft: mark reconnecting only if connection actually drops (presence handles that)
+            logger.info("[UI] Tab hidden — tetap di room, tidak leave");
+        } else if (document.visibilityState === "visible") {
+            // Restore connection flag when tab back
+            markConnected(currentRoomId, currentUser.uid).catch(() => {});
+            logger.info("[UI] Tab visible — restore connected");
+        }
+    });
+
+    // pagehide/unload: biarkan Firebase onDisconnect yang handle; jangan leaveRoom di sini
+    window.addEventListener("pagehide", () => {
+        logger.info("[UI] pagehide — onDisconnect akan handle presence");
+    });
 }
 
 function startSolo() {

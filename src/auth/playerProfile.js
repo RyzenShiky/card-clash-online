@@ -32,13 +32,21 @@ export async function createPlayerProfile(user) {
     const accountType = isAnonymous ? "guest" : "google";
 
     if (snapshot.exists()) {
-        logger.info("[Profile] Existing profile — update lastSeen / public fields");
-        await update(ref(database, `players/${user.uid}/public`), {
-            displayName,
-            photoURL,
+        // Jangan overwrite displayName/avatar yang sudah diedit user
+        logger.info("[Profile] Existing profile — update lastSeen only");
+        const existingPub = snapshot.val()?.public || {};
+        const patch = {
             accountType,
             lastSeen: serverTimestamp()
-        });
+        };
+        // Hanya isi displayName jika masih kosong di DB
+        if (!existingPub.displayName && displayName) {
+            patch.displayName = displayName;
+        }
+        if (!existingPub.photoURL && photoURL) {
+            patch.photoURL = photoURL;
+        }
+        await update(ref(database, `players/${user.uid}/public`), patch);
         return snapshot.val();
     }
 

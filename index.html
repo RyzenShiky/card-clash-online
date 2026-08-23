@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Card Clash</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="./src/styles/main.css">
 </head>
 <body>
@@ -22,11 +23,36 @@
       window.AGORA_APP_ID = "890c46eb134e494282a7e8fa18ec592f";
     </script>
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
-    <script type="module" src="./src/main.js?v=2"></script>
+    <script type="module" src="./src/main.js?v=3"></script>
     <script>
+      // Tangkap gagal load module (ERR_CONNECTION_RESET / server mati)
+      window.addEventListener("error", (ev) => {
+        const msg = String(ev.message || "");
+        const src = String(ev.filename || "");
+        if (
+          src.includes("/src/") ||
+          msg.includes("Failed to fetch") ||
+          msg.includes("Importing a module script failed")
+        ) {
+          const el = document.getElementById("loading-screen");
+          if (el) {
+            el.innerHTML =
+              "<p style='color:#fff;max-width:320px;text-align:center;padding:1rem'>" +
+              "<b>Gagal memuat game</b><br><br>" +
+              "Biasanya server lokal terputus atau cache Service Worker.<br><br>" +
+              "1. Pastikan server masih jalan<br>" +
+              "2. Hard refresh: Ctrl+Shift+R<br>" +
+              "3. Atau buka DevTools → Application → Unregister Service Worker<br><br>" +
+              "<small style='opacity:.7'>" + (src || msg).slice(0, 120) + "</small></p>";
+            el.classList.remove("hidden");
+            el.style.display = "flex";
+          }
+        }
+      }, true);
+
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
-          navigator.serviceWorker.register("./sw.js").catch(() => {});
+          navigator.serviceWorker.register("./sw.js?v=3").catch(() => {});
         });
       }
     </script>
