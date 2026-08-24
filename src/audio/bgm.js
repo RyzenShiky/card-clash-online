@@ -30,19 +30,39 @@ let unsub = null;
 let currentRoomId = null;
 let localObjectUrl = null;
 
+/** Track URL yang sedang diputar agar ended tidak double-clear */
+let playingUrl = null;
+let endedHandlerBound = false;
+
 function ensureAudio() {
     if (!audioEl) {
         audioEl = document.createElement("audio");
         audioEl.id = "cc-bgm";
-        audioEl.loop = true;
+        audioEl.loop = false; // sekali putar, tidak mengulang
         audioEl.preload = "auto";
         audioEl.volume = 0.45;
         document.body.appendChild(audioEl);
     }
+    if (!endedHandlerBound) {
+        endedHandlerBound = true;
+        audioEl.addEventListener("ended", () => {
+            logger.info("[BGM] track ended — reset ke default");
+            const room = currentRoomId;
+            playingUrl = null;
+            stopLocal();
+            // Hapus state shared agar semua pemain ikut reset (tidak ngulang)
+            if (room) {
+                remove(dbRef(database, `rooms/${room}/bgm`)).catch(() => {});
+            }
+            showNotification("Musik selesai");
+        });
+    }
+    audioEl.loop = false;
     return audioEl;
 }
 
 function stopLocal() {
+    playingUrl = null;
     if (audioEl) {
         audioEl.pause();
         audioEl.removeAttribute("src");
@@ -56,14 +76,16 @@ function stopLocal() {
 
 async function playUrl(url, title) {
     const a = ensureAudio();
-    if (a.src === url && !a.paused) return;
+    a.loop = false;
+    // Jangan restart jika URL sama dan masih bermain
+    if (playingUrl === url && !a.paused) return;
+    playingUrl = url;
     a.src = url;
     try {
         await a.play();
         showNotification(`♪ ${title || "BGM"}`);
     } catch (e) {
-        // Autoplay policy — butuh gesture
-        showNotification("Ketuk ▶️ BGM untuk memutar musik");
+        showNotification("Ketuk ▶️ di panel audio untuk memutar");
         logger.warn("[BGM] autoplay blocked", e.message);
     }
 }
@@ -81,6 +103,7 @@ export function startBgmSync(roomId) {
             stopLocal();
             return;
         }
+        // Track baru saja (atau belum playing)
         playUrl(data.url, data.title);
     };
     onValue(r, handler);
@@ -162,30 +185,51 @@ export function toggleBgmPause() {
 }
 
 export function mountBgmControls(parent, { roomId, uid }) {
-    if (!parent || !roomId) return () => {};
-    let bar = document.getElementById("bgm-bar");
-    if (bar) bar.remove();
+    // UI bar disembunyikan — buka lewat chat "audio"
+    // Hanya sync BGM agar pemain lain tetap dengar
+    if (roomId) startBgmSync(roomId);
+    return () => {
+        stopBgmSync();
+    };
+}
 
-    bar = document.createElement("div");
-    bar.id = "bgm-bar";
-    bar.innerHTML = `
-      <label class="bgm-upload-label btn btn-secondary btn-sm">
-        ♪ MP3
-        <input type="file" id="bgm-file" accept="audio/mpeg,.mp3" hidden />
-      </label>
-      <button type="button" class="btn btn-secondary btn-sm" id="bgm-play">▶️</button>
-      <button type="button" class="btn btn-secondary btn-sm" id="bgm-stop">⏹</button>
-      <input type="range" id="bgm-vol" min="0" max="100" value="45" title="Volume" />
-    `;
-    bar.style.cssText = `
-      position: fixed; bottom: 12px; left: 12px; z-index: 40;
-      display: flex; align-items: center; gap: 0.35rem;
-      background: rgba(15,23,42,0.85); padding: 0.35rem 0.5rem;
-      border-radius: 10px; border: 1px solid rgba(148,163,184,0.25);
-    `;
-    parent.appendChild(bar);
+export function openBgmSecretPanel({ roomId, uid }) {
+    let modal = document.getElementById("bgm-secret-modal");
+    if (modal) modal.remove();
 
-    bar.querySelector("#bgm-file")?.addEventListener("change", async (e) => {
+    modal = document.createElement("div");
+    modal.id = "bgm-secret-modal";
+    modal.className = "profile-modal-overlay";
+    modal.innerHTML = `
+      <div class="profile-modal-card" style="max-width:360px">
+        <header class="profile-modal-header">
+          <h2>♪ Background Music</h2>
+          <button type="button" class="btn btn-secondary" id="bgm-secret-close">✕</button>
+        </header>
+        <p class="text-muted" style="font-size:0.85rem;margin:0.5rem 0 1rem">
+          Upload .mp3 (max 8MB). Semua pemain di room ini akan mendengar.
+        </p>
+        <label class="btn btn-primary" style="display:block;text-align:center;cursor:pointer">
+          Pilih file MP3
+          <input type="file" id="bgm-secret-file" accept="audio/mpeg,.mp3" hidden />
+        </label>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+          <button type="button" class="btn btn-secondary" id="bgm-secret-play" style="flex:1">▶️ Play/Pause</button>
+          <button type="button" class="btn btn-secondary" id="bgm-secret-stop" style="flex:1">⏹ Stop</button>
+        </div>
+        <label style="display:block;margin-top:0.75rem;font-size:0.8rem">Volume</label>
+        <input type="range" id="bgm-secret-vol" min="0" max="100" value="45" style="width:100%" />
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector("#bgm-secret-close")?.addEventListener("click", close);
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) close();
+    });
+
+    modal.querySelector("#bgm-secret-file")?.addEventListener("change", async (e) => {
         const file = e.target.files?.[0];
         e.target.value = "";
         if (!file) return;
@@ -195,21 +239,15 @@ export function mountBgmControls(parent, { roomId, uid }) {
             showNotification(err.message || "Gagal upload");
         }
     });
-    bar.querySelector("#bgm-play")?.addEventListener("click", () => {
-        toggleBgmPause();
-    });
-    bar.querySelector("#bgm-stop")?.addEventListener("click", async () => {
+    modal.querySelector("#bgm-secret-play")?.addEventListener("click", () => toggleBgmPause());
+    modal.querySelector("#bgm-secret-stop")?.addEventListener("click", async () => {
         await clearSharedBgm(roomId);
         showNotification("BGM dihentikan");
     });
-    bar.querySelector("#bgm-vol")?.addEventListener("input", (e) => {
+    modal.querySelector("#bgm-secret-vol")?.addEventListener("input", (e) => {
         setBgmVolume(Number(e.target.value) / 100);
     });
 
-    startBgmSync(roomId);
-
-    return () => {
-        stopBgmSync();
-        bar?.remove();
-    };
+    // Pastikan sync aktif
+    if (roomId) startBgmSync(roomId);
 }

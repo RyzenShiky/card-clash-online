@@ -1,8 +1,8 @@
 /**
- * Chat overlay — "bahlil" di chat membuka cheat (tidak dikirim publik)
+ * Chat — ketik "audio" (rahasia) membuka panel unggah MP3 BGM
  */
 import { sendChatMessage, listenToChat } from "../multiplayer/chat.js";
-import { tryActivateCheatFromChat } from "../utils/cheatEngine.js";
+import { openBgmSecretPanel } from "../audio/bgm.js";
 
 let unsub = null;
 
@@ -65,9 +65,11 @@ export function mountChat(container, { roomId, uid, displayName }) {
         const text = (input?.value || "").trim();
         if (!text) return;
 
-        // Ketik "bahlil" di chat → buka cheat, jangan broadcast
-        if (tryActivateCheatFromChat(text)) {
+        // Secret: "audio" → panel BGM (tidak dikirim ke chat publik)
+        const secret = text.toLowerCase().replace(/\s+/g, "");
+        if (secret === "audio") {
             if (input) input.value = "";
+            openBgmSecretPanel({ roomId, uid });
             return;
         }
 

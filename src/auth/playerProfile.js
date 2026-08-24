@@ -15,6 +15,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 import { database } from "../firebase/services.js";
 import { logger } from "../utils/logger.js";
+import { indexUsername } from "../multiplayer/friends.js";
 
 /**
  * Buat atau restore profil setelah login.
@@ -77,6 +78,9 @@ export async function createPlayerProfile(user) {
     };
 
     await set(playerRef, profile);
+    try {
+        await indexUsername(user.uid, displayName);
+    } catch (_) {}
     logger.info("[Profile] New profile created:", accountType);
     return profile;
 }

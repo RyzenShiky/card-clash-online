@@ -1,12 +1,12 @@
 /**
  * Matchmaking Ranked / Casual
  *
- * Ranked flow:
- *  1. Cari antrean room waiting (pemain manusia online)
- *  2. Jika tidak ada → buat room antrean
- *  3. Tunggu SEARCH_WAIT_MS untuk manusia lain
- *  4. Jika masih sepi → isi bot otomatis sampai 4
- *  5. Pemain tekan Ready → jika 6/6 & semua manusia ready → auto-start (tanpa tombol Start host)
+ * Flow Casual / Ranked:
+ *  1. Cari room antrean yang masih ada slot (prioritas pemain manusia)
+ *  2. Jika tidak ada → buat room antrean baru
+ *  3. Tunggu SEARCH_WAIT (12–15s) agar pemain real bisa join
+ *  4. Jika masih kurang pemain → isi sisa slot dengan bot
+ *  5. Auto-start saat penuh
  */
 import {
     ref,
@@ -31,8 +31,9 @@ const QUEUE_RANKED = "matchmaking/ranked";
 
 /** Tunggu pemain manusia sebelum isi bot */
 /** Ranked/Casual: tunggu manusia, lalu isi bot otomatis */
-export const SEARCH_WAIT_MS = 3_000;
-export const RANKED_SEARCH_WAIT_MS = 2_500;
+/** Tunggu pemain manusia dulu; bot hanya jika sepi / antrean lama */
+export const SEARCH_WAIT_MS = 12_000;
+export const RANKED_SEARCH_WAIT_MS = 15_000;
 
 const BOT_NAMES = [
     "Andi", "Budi", "Citra", "Dewi", "Eko", "Fajar", "Gita", "Hana",

@@ -16,7 +16,8 @@ import { createPlayerProfile } from "./auth/playerProfile.js";
 import {
     subscribeProfile,
     getDisplayName,
-    getAvatarId
+    getAvatarId,
+    ensureProfilesLoaded
 } from "./auth/profileStore.js";
 import { secureAccountWithGoogle } from "./auth/accountLinking.js";
 import { initializePresence } from "./multiplayer/presence.js";
@@ -41,9 +42,9 @@ import {
     maybeFillBotsAfterSearch,
     allHumansReady,
     isLobbyFull,
-    SEARCH_WAIT_MS
+    SEARCH_WAIT_MS,
+    RANKED_SEARCH_WAIT_MS
 } from "./multiplayer/matchmaking.js";
-// RANKED_SEARCH_WAIT_MS re-export used below
 import { applyRankedResult, ensureRankedProfile } from "./multiplayer/ranked.js";
 import { logEvent, logMatchStart, logMatchEnd } from "./multiplayer/matchReplay.js";
 import { chooseBotAction, botThinkMs } from "./game/botAI.js";
@@ -74,7 +75,6 @@ import { sfx } from "./audio/sfx.js";
 import { pickColor, showDrawPenaltyAnim } from "./ui/colorPicker.js";
 import { mountChat } from "./ui/chatUI.js";
 import { mountBgmControls, stopBgmSync } from "./audio/bgm.js";
-import { mountMusicPanel, unmountMusicPanel } from "./ui/musicUI.js";
 import { initCheatEngine } from "./utils/cheatEngine.js";
 import {
     joinVoiceChannel,
@@ -104,7 +104,6 @@ let currentRoomId = null;
 let currentRoomCode = null;
 let roomUnsubscribe = null;
 let soloGame = null;
-let actionInFlight = false;
 let chatCleanup = null;
 let bgmCleanup = null;
 let voiceMuted = false;
@@ -205,12 +204,24 @@ async function startAuthenticatedSession(user) {
         }
     });
 
+    try {
+        await createPlayerProfile(user);
+        if (typeof ensureProfilesLoaded === "function") {
+            await ensureProfilesLoaded([user.uid]);
+        }
+    } catch (e) {
+        logger.warn("[Boot] Profile create failed (check RTDB):", e.message);
+    }
+
     startApplication();
 
-    // Background: jangan block UI
-    createPlayerProfile(user).catch((e) =>
-        logger.warn("[Boot] Profile create failed (check RTDB):", e.message)
-    );
+    subscribeProfile(user.uid, () => {
+        try {
+            if (typeof getPhase === "function" && getPhase() === "HOME") {
+                startApplication();
+            }
+        } catch (_) {}
+    });
     queueMicrotask(() => {
         try {
             if (presenceCleanup) presenceCleanup();
@@ -248,6 +259,15 @@ function startApplication() {
             onOnline: showOnlineMenu,
             onPrivateRoom: showOnlineMenu,
             onProfile: showProfileInfo,
+            onFriends: async () => {
+                const { openFriendsModal } = await import("./ui/friendsUI.js");
+                openFriendsModal({
+                    user: currentUser,
+                    roomId: currentRoomId,
+                    roomCode: currentRoomCode,
+                    onJoinCode: (code) => handleJoinRoom(code)
+                });
+            },
             onLeaderboard: async () => {
                 const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
                 openLeaderboardModal();
@@ -306,7 +326,6 @@ async function showProfileInfo() {
     try {
         const { openProfileModal } = await import("./ui/profileUI.js");
         await openProfileModal(currentUser, {
-            getRoomId: () => currentRoomId,
             onUpdated: (u) => {
                 if (u) currentUser = u;
             }
@@ -354,7 +373,7 @@ async function handleMatchmaking(mode) {
         if (mode === "ranked") await ensureRankedProfile(currentUser.uid);
         const opts = {
             mode,
-            maxPlayers: mode === "ranked" ? 4 : 4,
+            maxPlayers: 4,
             botFill: true,
             customRules: pendingCustomRules || undefined
         };
@@ -399,9 +418,9 @@ async function handleCreateRoom() {
     }
 }
 
-async function handleJoinRoom() {
+async function handleJoinRoom(presetCode = null) {
     if (!currentUser) return;
-    const code = promptJoinCode();
+    const code = presetCode || promptJoinCode();
     if (!code) return;
 
     try {
@@ -438,7 +457,7 @@ function enterLobby(roomId, roomCode) {
     showScreen("lobby");
     markConnected(currentRoomId || roomId, currentUser.uid).catch(() => {});
 
-    // Ranked/Casual queue: host auto-isi BOT jika kurang pemain, lalu auto-start
+    // Prioritas pemain manusia; bot hanya setelah timeout antrean
     const scheduleBotFill = (room) => {
         const isHost = room.meta?.hostId === currentUser.uid;
         const isQueue =
@@ -450,47 +469,40 @@ function enterLobby(roomId, roomCode) {
         if (botFillTimer) return;
 
         const isRanked = room.meta?.mode === "ranked";
-        const waitMs = isRanked ? 2500 : SEARCH_WAIT_MS;
+        const waitMs = isRanked ? RANKED_SEARCH_WAIT_MS : SEARCH_WAIT_MS;
         const started = room.meta?.searchStartedAt || Date.now();
         const waitLeft = Math.max(0, waitMs - (Date.now() - started));
-        if (waitLeft > 400) {
+        if (waitLeft > 500) {
             showNotification(
                 isRanked
-                    ? `Ranked: mencari lawan… ${Math.ceil(waitLeft / 1000)}d`
-                    : `Mencari lawan… ${Math.ceil(waitLeft / 1000)}d`
+                    ? `Ranked: mencari pemain… ${Math.ceil(waitLeft / 1000)}d`
+                    : `Casual: mencari pemain… ${Math.ceil(waitLeft / 1000)}d`
             );
         }
         botFillTimer = setTimeout(async () => {
             botFillTimer = null;
             try {
-                const target =
-                    room.settings?.maxPlayers ?? (isRanked ? 4 : 4);
                 await maybeFillBotsAfterSearch(roomId, currentUser.uid, {
-                    targetCount: target
+                    targetCount: room.settings?.maxPlayers ?? 4
                 });
-                // Snapshot berikutnya → tryAutoStart
                 showNotification(
-                    isRanked ? "Ranked: meja diisi — memulai…" : "Lawan siap — memulai…"
+                    isRanked
+                        ? "Ranked: slot terisi — memulai…"
+                        : "Casual: slot terisi — memulai…"
                 );
             } catch (e) {
                 logger.warn("[Queue] bot fill:", e.message);
-                showNotification(e.message || "Gagal isi lawan");
             }
-        }, waitLeft || 300);
+        }, waitLeft || 400);
     };
 
     const tryAutoStart = async (room) => {
         const isHost = room.meta?.hostId === currentUser.uid;
         if (!isHost || room.meta?.status !== "waiting") return;
-        const isQueue =
-            room.meta?.matchmaking ||
-            room.meta?.mode === "ranked" ||
-            room.meta?.mode === "casual" ||
-            room.settings?.autoStart;
+        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
         if (!isQueue && !room.settings?.autoStart) return;
         if (!isLobbyFull(room)) return;
-        // Queue: auto-ready manusia agar tidak stuck di "tekan Ready"
-        if (isQueue && !allHumansReady(room)) {
+        if (!allHumansReady(room)) {
             try {
                 for (const [id, pl] of Object.entries(room.players || {})) {
                     if (pl && !pl.isBot && !pl.ready) {
@@ -500,9 +512,8 @@ function enterLobby(roomId, roomCode) {
             } catch (e) {
                 logger.warn("[Queue] auto-ready:", e.message);
             }
-            return; // next snapshot will start
+            return;
         }
-        if (!isQueue && !allHumansReady(room)) return;
         if (autoStartLock) return;
         autoStartLock = true;
         try {
@@ -584,19 +595,15 @@ function enterLobby(roomId, roomCode) {
 }
 
 async function leaveCurrentRoom() {
+    setPhase("HOME");
     try {
-        if (bgmCleanup) {
-            bgmCleanup();
-            bgmCleanup = null;
-        }
+        if (bgmCleanup) { bgmCleanup(); bgmCleanup = null; }
         stopBgmSync();
     } catch (_) {}
-    setPhase("HOME");
     if (chatCleanup) {
         chatCleanup();
         chatCleanup = null;
     }
-    try { unmountMusicPanel(); } catch (_) {}
     try { await leaveVoiceChannel(); } catch (_) {}
     document.getElementById("btn-mic")?.remove();
     cleanupMatchSubs();
@@ -636,7 +643,6 @@ function cleanupMatchSubs() {
 
 function enterMultiplayerMatch(roomId, room) {
     setPhase("LOADING_MATCH");
-    // Cegah double-entry (subscribe room bisa fire 2x) — ini yang bikin Agora/start gantung
     if (matchEntryLock) {
         logger.info("[Match] already entering, skip duplicate");
         return;
@@ -926,11 +932,6 @@ function enterMultiplayerMatch(roomId, room) {
             );
 
             ensureChat();
-            try {
-                mountMusicPanel(roomId, currentUser.uid);
-            } catch (e) {
-                logger.warn("[Music] mount failed", e.message);
-            }
 
             // Place mid-game: pemain yang sudah kosong bisa nonton; yang lain LANJUT
             const myFin = publicState.finishedPlayers?.[currentUser.uid];
@@ -1065,7 +1066,6 @@ function enterMultiplayerMatch(roomId, room) {
         listenerManager.add(matchKey, unsubHand);
     };
 
-    boot();
 }
 
 /**
@@ -1187,13 +1187,13 @@ function ensureMicButton() {
     if (document.getElementById("btn-mic")) return;
     const btn = document.createElement("button");
     btn.id = "btn-mic";
-    btn.className = "btn btn-secondary voice-mute-button";
+    btn.className = "btn btn-secondary btn-mic";
     btn.textContent = "🎙️ Mic";
     btn.addEventListener("click", () => {
-        const nowMuted = setMuted(!voiceManager.muted);
-        voiceMuted = nowMuted;
-        btn.textContent = nowMuted ? "🔇 Unmute" : "🎙️ Mic";
-        btn.classList.toggle("muted", nowMuted);
+        voiceMuted = !voiceMuted;
+        toggleMuteMic(voiceMuted);
+        btn.textContent = voiceMuted ? "🔇 Unmute" : "🎙️ Mic";
+        btn.classList.toggle("muted", voiceMuted);
     });
     document.body.appendChild(btn);
 }
@@ -1246,9 +1246,7 @@ function installConnectionGuards() {
     });
     window.addEventListener("online", () => {
         showOnlineBannerBrief();
-        if (getPhase() === "RECONNECTING") {
-            forcePhase("PLAYING");
-        }
+        if (getPhase() === "RECONNECTING") forcePhase("PLAYING");
     });
     setErrorRecoveryHooks({
         onLobby: () => {

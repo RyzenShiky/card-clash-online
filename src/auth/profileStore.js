@@ -14,6 +14,7 @@ import {
 import { updateProfile as updateAuthProfile } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import { database, auth } from "../firebase/services.js";
 import { logger } from "../utils/logger.js";
+import { indexUsername } from "../multiplayer/friends.js";
 
 /** @type {Map<string, object>} */
 const cache = new Map();
@@ -137,6 +138,11 @@ export async function savePlayerProfile(uid, { displayName, avatarId, settings }
         logger.warn("[ProfileStore] Auth updateProfile failed:", e.message);
     }
 
+    try {
+        await indexUsername(uid, name);
+    } catch (e) {
+        logger.warn("[ProfileStore] username index:", e.message);
+    }
     logger.info("[ProfileStore] saved version", nextVer, name);
     return nextVer;
 }
@@ -173,4 +179,23 @@ export function destroyAllProfileSubscriptions() {
     firebaseUnsubs.clear();
     listeners.clear();
     cache.clear();
+}
+
+export async function ensureProfilesLoaded(uids = []) {
+    const list = (uids || []).filter(Boolean);
+    await Promise.all(
+        list.map(
+            (uid) =>
+                new Promise((resolve) => {
+                    const unsub = subscribeProfile(uid, () => {
+                        unsub();
+                        resolve();
+                    });
+                    setTimeout(() => {
+                        unsub();
+                        resolve();
+                    }, 2500);
+                })
+        )
+    );
 }

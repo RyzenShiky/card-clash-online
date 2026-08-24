@@ -9,6 +9,7 @@ import {
     ref,
     set,
     onValue,
+    off,
     onDisconnect,
     serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
@@ -89,6 +90,32 @@ export function subscribePresence(uid, callback) {
     return () => {
         try {
             unsub();
+        } catch (_) {}
+    };
+}
+
+/**
+ * Real-time global online player count (bukan angka dummy)
+ * Menghitung presence/{uid}.state === 'online'
+ */
+export function subscribeOnlineCount(callback) {
+    const presenceRoot = ref(database, "presence");
+    const handler = (snap) => {
+        let n = 0;
+        if (snap.exists()) {
+            snap.forEach((child) => {
+                const v = child.val();
+                if (v && v.state === "online") n += 1;
+            });
+        }
+        try {
+            callback(n);
+        } catch (_) {}
+    };
+    onValue(presenceRoot, handler);
+    return () => {
+        try {
+            off(presenceRoot, "value", handler);
         } catch (_) {}
     };
 }
