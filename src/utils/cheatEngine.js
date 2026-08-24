@@ -1,6 +1,7 @@
 /**
- * Cheat "bahlil" — HANYA di luar input chat
- * Maksimal 1x per match (roomId)
+ * Cheat "bahlil"
+ * - Keyboard di luar input
+ * - Atau ketik "bahlil" di kolom chat
  */
 import { sfx } from "../audio/sfx.js";
 import {
@@ -10,6 +11,7 @@ import {
     update
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 import { database } from "../firebase/services.js";
+import { showNotification } from "../ui/notificationUI.js";
 
 let inputBuffer = "";
 const SECRET = "bahlil";
@@ -28,9 +30,7 @@ export function initCheatEngine(options = {}) {
         const tag = (t.tagName || "").toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
         if (t.isContentEditable) return;
-        if (t.closest?.("#chat-input, .chat-input-box, .chat-container, [contenteditable=true]")) {
-            return;
-        }
+        if (t.closest?.("#chat-input, .chat-input-box, .chat-container")) return;
 
         if (e.key.length === 1 && /[a-z]/i.test(e.key)) {
             inputBuffer += e.key.toLowerCase();
@@ -45,15 +45,27 @@ export function initCheatEngine(options = {}) {
     });
 }
 
+/**
+ * Dipanggil dari chat saat user kirim pesan.
+ * @returns {boolean} true jika pesan adalah secret (jangan broadcast)
+ */
+export function tryActivateCheatFromChat(text) {
+    const normalized = String(text || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "");
+    if (normalized === SECRET) {
+        activateCheatMenu();
+        return true;
+    }
+    return false;
+}
+
 async function activateCheatMenu() {
     const roomId = roomIdGetter();
     const uid = uidGetter();
     if (!roomId || !uid) {
-        alert("Cheat hanya aktif saat di dalam match.");
-        return;
-    }
-    if (usedInRoom.has(roomId)) {
-        alert("Cheat sudah dipakai 1x di match ini.");
+        showNotification("Cheat hanya aktif saat di dalam match.");
         return;
     }
 
@@ -62,23 +74,29 @@ async function activateCheatMenu() {
     } catch (_) {}
 
     const action = prompt(
-        "=== DEVELOPER MENU (1x / match) ===\n" +
-            "1. X-Ray\n" +
-            "2. Tambah +2\n" +
-            "3. Tambah Wild +4\n" +
+        "=== DEVELOPER MENU ===\n" +
+            "1. X-Ray (boleh berkali-kali)\n" +
+            "2. Tambah +2 (1x / match)\n" +
+            "3. Tambah Wild +4 (1x / match)\n" +
             "Pilih 1-3:"
     );
     if (!action) return;
 
-    usedInRoom.add(roomId);
-
     if (action === "1") {
         document.body.classList.toggle("xray-on");
-        alert(document.body.classList.contains("xray-on") ? "X-Ray ON" : "X-Ray OFF");
+        showNotification(
+            document.body.classList.contains("xray-on") ? "X-Ray ON" : "X-Ray OFF"
+        );
         return;
     }
 
     if (action === "2" || action === "3") {
+        if (usedInRoom.has(roomId)) {
+            showNotification("Cheat kartu sudah dipakai 1x di match ini.");
+            return;
+        }
+        usedInRoom.add(roomId);
+
         const isWd4 = action === "3";
         const card = {
             id: `cheat_${Date.now()}`,
@@ -97,11 +115,10 @@ async function activateCheatMenu() {
             handCounts: counts,
             updatedAt: Date.now()
         });
-        alert(isWd4 ? "+ Wild Draw 4" : "+ Draw 2");
+        showNotification(isWd4 ? "+ Wild Draw 4" : "+ Draw 2");
     }
 }
 
-/** Reset saat leave room (opsional) */
 export function resetCheatForRoom(roomId) {
     if (roomId) usedInRoom.delete(roomId);
 }

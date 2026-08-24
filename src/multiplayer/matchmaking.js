@@ -30,7 +30,9 @@ const QUEUE_CASUAL = "matchmaking/casual";
 const QUEUE_RANKED = "matchmaking/ranked";
 
 /** Tunggu pemain manusia sebelum isi bot */
-export const SEARCH_WAIT_MS = 6_000;
+/** Ranked/Casual: tunggu manusia, lalu isi bot otomatis */
+export const SEARCH_WAIT_MS = 3_000;
+export const RANKED_SEARCH_WAIT_MS = 2_500;
 
 const BOT_NAMES = [
     "Andi", "Budi", "Citra", "Dewi", "Eko", "Fajar", "Gita", "Hana",
@@ -50,7 +52,8 @@ export async function findQuickMatch(user, options = {}) {
     const maxPlayers =
         options.maxPlayers ??
         (mode === "ranked" ? RANKED_MAX_PLAYERS : 4);
-    const botFill = options.botFill !== false;
+    const botFill =
+        mode === "ranked" ? true : options.botFill !== false;
 
     if (mode === "ranked") {
         await ensureRankedProfile(user.uid);
@@ -165,13 +168,22 @@ export function allHumansReady(room) {
 }
 
 export async function maybeFillBotsAfterSearch(roomId, hostUid, options = {}) {
-    const target = options.targetCount ?? RANKED_MAX_PLAYERS;
     const room = await getRoom(roomId);
     if (!room) return null;
     if (room.meta?.hostId !== hostUid) return room;
     if (room.meta?.status !== "waiting") return room;
-    if (room.settings?.botFill === false) return room;
+
+    const isRanked = room.meta?.mode === "ranked";
+    // Ranked: SELALU boleh isi bot jika kurang pemain
+    if (!isRanked && room.settings?.botFill === false) return room;
+
+    const target =
+        options.targetCount ??
+        room.settings?.maxPlayers ??
+        (isRanked ? RANKED_MAX_PLAYERS : 4);
+
     if (countPlayers(room.players) >= target) return room;
+    logger.info("[Matchmaking] Auto-fill bots →", target, "mode", room.meta?.mode);
     return fillBots(roomId, hostUid, target);
 }
 
@@ -242,18 +254,43 @@ export async function clearFromQueue(roomId, mode = "casual") {
     } catch (_) {}
 }
 
-export async function tryAutoStart(roomId, hostUid) {
+
+export async function tryAutoStart(roomId, hostUid, opts = {}) {
     const room = await getRoom(roomId);
     if (!room) return false;
     if (room.meta?.hostId !== hostUid) return false;
     if (room.meta?.status !== "waiting") return false;
     if (!isLobbyFull(room)) return false;
-    if (!allHumansReady(room)) return false;
 
-    const { startMatch } = await import("./roomManager.js");
-    const mode = room.meta?.mode || "casual";
-    await clearFromQueue(roomId, mode);
-    await startMatch(roomId, hostUid);
-    logger.info("[Matchmaking] Auto-started", roomId);
-    return true;
+    const isQueue = !!(room.meta?.matchmaking || room.settings?.autoStart);
+    // Queue Ranked/Casual: start tanpa menunggu Ready manual
+    if (!isQueue && !allHumansReady(room)) return false;
+    if (!isQueue) {
+        const ids = Object.keys(room.players || {});
+        if (ids.length < 2) return false;
+    }
+
+    try {
+        const mode = room.meta?.mode || "casual";
+        await clearFromQueue(roomId, mode);
+        // Auto-ready semua manusia di queue agar startMatch lolos
+        if (isQueue) {
+            const updates = {};
+            for (const [id, pl] of Object.entries(room.players || {})) {
+                if (pl && !pl.isBot && !pl.ready) {
+                    updates[`players/${id}/ready`] = true;
+                }
+            }
+            if (Object.keys(updates).length) {
+                await update(ref(database, `rooms/${roomId}`), updates);
+            }
+        }
+        const { startMatch } = await import("./roomManager.js");
+        await startMatch(roomId, hostUid);
+        logger.info("[Matchmaking] Auto-started", roomId);
+        return true;
+    } catch (e) {
+        logger.warn("[Matchmaking] tryAutoStart failed:", e.message);
+        return false;
+    }
 }

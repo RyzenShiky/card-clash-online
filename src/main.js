@@ -43,6 +43,7 @@ import {
     isLobbyFull,
     SEARCH_WAIT_MS
 } from "./multiplayer/matchmaking.js";
+// RANKED_SEARCH_WAIT_MS re-export used below
 import { applyRankedResult, ensureRankedProfile } from "./multiplayer/ranked.js";
 import { logEvent, logMatchStart, logMatchEnd } from "./multiplayer/matchReplay.js";
 import { chooseBotAction, botThinkMs } from "./game/botAI.js";
@@ -72,14 +73,25 @@ import {
 import { sfx } from "./audio/sfx.js";
 import { pickColor, showDrawPenaltyAnim } from "./ui/colorPicker.js";
 import { mountChat } from "./ui/chatUI.js";
+import { mountBgmControls, stopBgmSync } from "./audio/bgm.js";
+import { mountMusicPanel, unmountMusicPanel } from "./ui/musicUI.js";
 import { initCheatEngine } from "./utils/cheatEngine.js";
 import {
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleMuteMic,
-    isVoiceAvailable
+    setMuted,
+    isVoiceAvailable,
+    voiceManager
 } from "./multiplayer/voiceChat.js";
 import { logger } from "./utils/logger.js";
+import { setPhase, forcePhase, getPhase, canPlayActions } from "./core/appPhase.js";
+import { handleError, setErrorRecoveryHooks } from "./core/errorHandler.js";
+import {
+    showReconnectBanner,
+    hideReconnectBanner,
+    showOnlineBannerBrief
+} from "./ui/reconnectBanner.js";
 
 /** Pending custom rules from Rules Creator */
 let pendingCustomRules = null;
@@ -94,6 +106,7 @@ let roomUnsubscribe = null;
 let soloGame = null;
 let actionInFlight = false;
 let chatCleanup = null;
+let bgmCleanup = null;
 let voiceMuted = false;
 let presenceCleanup = null;
 let authUnsub = null;
@@ -164,6 +177,7 @@ async function startAuthenticatedSession(user) {
     // Tampilkan menu DULU — profile/presence di background (HP lebih cepat)
     hideAuthScreen();
     installVisibilityGuards();
+    installConnectionGuards();
 
     const loading = screens.loading();
     if (loading) {
@@ -224,18 +238,25 @@ async function startAuthenticatedSession(user) {
 
 function startApplication() {
     showScreen("menu");
-    renderMenu(screens.menu(), {
-        onSolo: startSolo,
-        onRanked: () => handleMatchmaking("ranked"),
-        onOnline: showOnlineMenu,
-        onProfile: showProfileInfo,
-        onLeaderboard: async () => {
-            const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
-            openLeaderboardModal();
+    setPhase("HOME");
+    renderMenu(
+        screens.menu(),
+        {
+            onPlayNow: () => handleMatchmaking("casual"),
+            onSolo: startSolo,
+            onRanked: () => handleMatchmaking("ranked"),
+            onOnline: showOnlineMenu,
+            onPrivateRoom: showOnlineMenu,
+            onProfile: showProfileInfo,
+            onLeaderboard: async () => {
+                const { openLeaderboardModal } = await import("./ui/leaderboardUI.js");
+                openLeaderboardModal();
+            },
+            onFeedback: () => openFeedbackModal(document.body, { context: "menu" }),
+            onSettings: () => openSettingsPanel()
         },
-        onFeedback: () => openFeedbackModal(document.body, { context: "menu" }),
-        onSettings: () => openSettingsPanel()
-    });
+        { uid: currentUser?.uid, user: currentUser }
+    );
 }
 
 function openSettingsPanel() {
@@ -286,15 +307,8 @@ async function showProfileInfo() {
         const { openProfileModal } = await import("./ui/profileUI.js");
         await openProfileModal(currentUser, {
             getRoomId: () => currentRoomId,
-            onUpdated: (u, profilePatch) => {
+            onUpdated: (u) => {
                 if (u) currentUser = u;
-                // Lobby/game re-render via room listener + ProfileStore;
-                // paksa refresh displayName di room bila sedang in-room
-                if (profilePatch?.displayName && currentUser) {
-                    currentUser = Object.assign(currentUser, {
-                        displayName: profilePatch.displayName
-                    });
-                }
             }
         });
     } catch (e) {
@@ -329,17 +343,18 @@ function showOnlineMenu() {
 }
 
 async function handleMatchmaking(mode) {
+    setPhase("MATCHMAKING");
     if (!currentUser) return;
     try {
         showNotification(
             mode === "ranked"
-                ? "Ranked: mencari antrean (6 pemain)…"
-                : "Quick Match…"
+                ? "Ranked: mencari lawan (max 4)…"
+                : "Quick Match: mencari lawan…"
         );
         if (mode === "ranked") await ensureRankedProfile(currentUser.uid);
         const opts = {
             mode,
-            maxPlayers: mode === "ranked" ? 6 : 4,
+            maxPlayers: mode === "ranked" ? 4 : 4,
             botFill: true,
             customRules: pendingCustomRules || undefined
         };
@@ -406,6 +421,7 @@ let botFillTimer = null;
 let autoStartLock = false;
 
 function enterLobby(roomId, roomCode) {
+    setPhase("ROOM_LOBBY");
     if (roomUnsubscribe) {
         roomUnsubscribe();
         roomUnsubscribe = null;
@@ -422,45 +438,75 @@ function enterLobby(roomId, roomCode) {
     showScreen("lobby");
     markConnected(currentRoomId || roomId, currentUser.uid).catch(() => {});
 
-    // Ranked/queue: host auto-isi bot setelah SEARCH_WAIT jika masih sepi
+    // Ranked/Casual queue: host auto-isi BOT jika kurang pemain, lalu auto-start
     const scheduleBotFill = (room) => {
         const isHost = room.meta?.hostId === currentUser.uid;
-        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
+        const isQueue =
+            room.meta?.matchmaking ||
+            room.meta?.mode === "ranked" ||
+            room.meta?.mode === "casual";
         if (!isHost || !isQueue || room.meta?.status !== "waiting") return;
         if (isLobbyFull(room)) return;
         if (botFillTimer) return;
 
+        const isRanked = room.meta?.mode === "ranked";
+        const waitMs = isRanked ? 2500 : SEARCH_WAIT_MS;
         const started = room.meta?.searchStartedAt || Date.now();
-        const waitLeft = Math.max(0, SEARCH_WAIT_MS - (Date.now() - started));
-        // Ranked: jangan bilang "bot" ke pemain
-        if (waitLeft > 500) {
-            showNotification(`Mencari lawan… ${Math.ceil(waitLeft / 1000)}d`);
+        const waitLeft = Math.max(0, waitMs - (Date.now() - started));
+        if (waitLeft > 400) {
+            showNotification(
+                isRanked
+                    ? `Ranked: mencari lawan… ${Math.ceil(waitLeft / 1000)}d`
+                    : `Mencari lawan… ${Math.ceil(waitLeft / 1000)}d`
+            );
         }
         botFillTimer = setTimeout(async () => {
             botFillTimer = null;
             try {
+                const target =
+                    room.settings?.maxPlayers ?? (isRanked ? 4 : 4);
                 await maybeFillBotsAfterSearch(roomId, currentUser.uid, {
-                    targetCount:
-                        room.settings?.maxPlayers ??
-                        (room.meta?.mode === "ranked" ? 6 : 4)
+                    targetCount: target
                 });
+                // Snapshot berikutnya → tryAutoStart
+                showNotification(
+                    isRanked ? "Ranked: meja diisi — memulai…" : "Lawan siap — memulai…"
+                );
             } catch (e) {
                 logger.warn("[Queue] bot fill:", e.message);
+                showNotification(e.message || "Gagal isi lawan");
             }
-        }, waitLeft || 400);
+        }, waitLeft || 300);
     };
 
     const tryAutoStart = async (room) => {
         const isHost = room.meta?.hostId === currentUser.uid;
         if (!isHost || room.meta?.status !== "waiting") return;
-        const isQueue = room.meta?.matchmaking || room.meta?.mode === "ranked";
+        const isQueue =
+            room.meta?.matchmaking ||
+            room.meta?.mode === "ranked" ||
+            room.meta?.mode === "casual" ||
+            room.settings?.autoStart;
         if (!isQueue && !room.settings?.autoStart) return;
         if (!isLobbyFull(room)) return;
-        if (!allHumansReady(room)) return;
+        // Queue: auto-ready manusia agar tidak stuck di "tekan Ready"
+        if (isQueue && !allHumansReady(room)) {
+            try {
+                for (const [id, pl] of Object.entries(room.players || {})) {
+                    if (pl && !pl.isBot && !pl.ready) {
+                        await setReady(roomId, id, true);
+                    }
+                }
+            } catch (e) {
+                logger.warn("[Queue] auto-ready:", e.message);
+            }
+            return; // next snapshot will start
+        }
+        if (!isQueue && !allHumansReady(room)) return;
         if (autoStartLock) return;
         autoStartLock = true;
         try {
-            showNotification("Semua siap — memulai…");
+            showNotification("Match dimulai…");
             const mode = room.meta?.mode || currentMatchMode || "casual";
             await clearFromQueue(roomId, mode);
             await startMatch(roomId, currentUser.uid);
@@ -538,10 +584,19 @@ function enterLobby(roomId, roomCode) {
 }
 
 async function leaveCurrentRoom() {
+    try {
+        if (bgmCleanup) {
+            bgmCleanup();
+            bgmCleanup = null;
+        }
+        stopBgmSync();
+    } catch (_) {}
+    setPhase("HOME");
     if (chatCleanup) {
         chatCleanup();
         chatCleanup = null;
     }
+    try { unmountMusicPanel(); } catch (_) {}
     try { await leaveVoiceChannel(); } catch (_) {}
     document.getElementById("btn-mic")?.remove();
     cleanupMatchSubs();
@@ -580,6 +635,7 @@ function cleanupMatchSubs() {
 }
 
 function enterMultiplayerMatch(roomId, room) {
+    setPhase("LOADING_MATCH");
     // Cegah double-entry (subscribe room bisa fire 2x) — ini yang bikin Agora/start gantung
     if (matchEntryLock) {
         logger.info("[Match] already entering, skip duplicate");
@@ -591,6 +647,16 @@ function enterMultiplayerMatch(roomId, room) {
     const isHost = room.meta?.hostId === currentUser.uid;
 
     showScreen("game");
+    setPhase("PLAYING");
+    try {
+        if (bgmCleanup) bgmCleanup();
+        bgmCleanup = mountBgmControls(document.body, {
+            roomId,
+            uid: currentUser.uid
+        });
+    } catch (e) {
+        logger.warn("[BGM] mount failed", e.message);
+    }
 
     // Voice WebRTC — non-blocking, timeout di dalam joinVoiceChannel
     if (isVoiceAvailable()) {
@@ -650,7 +716,6 @@ function enterMultiplayerMatch(roomId, room) {
                     const handSnap = await get(
                         ref(database, `rooms/${roomId}/hands/${turn}`)
                     );
-                    if (state.finishedPlayers?.[turn]) return;
                     const botHand = handSnap.exists() ? handSnap.val() : [];
                     const oppCounts = Object.entries(state.handCounts || {})
                         .filter(([id]) => id !== turn)
@@ -765,12 +830,6 @@ function enterMultiplayerMatch(roomId, room) {
                 },
                 {
                     onPlayCard: async (cardId, chosenColor = null) => {
-                        if (actionInFlight) return;
-                        if (publicState?.finishedPlayers?.[currentUser.uid]) {
-                            showNotification("Kamu sudah selesai");
-                            return;
-                        }
-                        actionInFlight = true;
                         try {
                             let color = chosenColor;
                             if (!color) {
@@ -789,33 +848,21 @@ function enterMultiplayerMatch(roomId, room) {
                                 cardId,
                                 color
                             );
-                            try { sfx.playCard(); } catch (_) {}
-                            try { hapticSuccess(); } catch (_) {}
+                            sfx.playCard();
+                            hapticSuccess();
                         } catch (e) {
-                            try { sfx.error(); } catch (_) {}
+                            sfx.error();
                             showNotification(e.message);
-                        } finally {
-                            actionInFlight = false;
                         }
                     },
                     onDraw: async () => {
-                        if (actionInFlight) return;
-                        if (publicState?.finishedPlayers?.[currentUser.uid]) {
-                            showNotification("Kamu sudah selesai");
-                            return;
-                        }
-                        actionInFlight = true;
                         try {
-                            await drawCardOnline(roomId, currentUser.uid, {
-                                turnVersion: publicState?.turnVersion ?? null
-                            });
-                            try { playDrawAnimation(1); } catch (_) {}
-                            try { sfx.draw(); } catch (_) {}
+                            await drawCardOnline(roomId, currentUser.uid);
+                            playDrawAnimation(1);
+                            sfx.draw();
                         } catch (e) {
-                            try { sfx.error(); } catch (_) {}
+                            sfx.error();
                             showNotification(e.message);
-                        } finally {
-                            actionInFlight = false;
                         }
                     },
                     onUno: async () => {
@@ -879,6 +926,11 @@ function enterMultiplayerMatch(roomId, room) {
             );
 
             ensureChat();
+            try {
+                mountMusicPanel(roomId, currentUser.uid);
+            } catch (e) {
+                logger.warn("[Music] mount failed", e.message);
+            }
 
             // Place mid-game: pemain yang sudah kosong bisa nonton; yang lain LANJUT
             const myFin = publicState.finishedPlayers?.[currentUser.uid];
@@ -1135,13 +1187,13 @@ function ensureMicButton() {
     if (document.getElementById("btn-mic")) return;
     const btn = document.createElement("button");
     btn.id = "btn-mic";
-    btn.className = "btn btn-secondary btn-mic";
+    btn.className = "btn btn-secondary voice-mute-button";
     btn.textContent = "🎙️ Mic";
     btn.addEventListener("click", () => {
-        voiceMuted = !voiceMuted;
-        toggleMuteMic(voiceMuted);
-        btn.textContent = voiceMuted ? "🔇 Unmute" : "🎙️ Mic";
-        btn.classList.toggle("muted", voiceMuted);
+        const nowMuted = setMuted(!voiceManager.muted);
+        voiceMuted = nowMuted;
+        btn.textContent = nowMuted ? "🔇 Unmute" : "🎙️ Mic";
+        btn.classList.toggle("muted", nowMuted);
     });
     document.body.appendChild(btn);
 }
@@ -1180,5 +1232,30 @@ initCheatEngine({
     getRoomId: () => currentRoomId,
     getUid: () => currentUser?.uid
 });
+
+
+function installConnectionGuards() {
+    if (window.__ccConnGuards) return;
+    window.__ccConnGuards = true;
+    window.addEventListener("offline", () => {
+        showReconnectBanner("Koneksi terputus. Menyambung kembali…");
+        const ph = getPhase();
+        if (ph === "PLAYING" || ph === "ROOM_LOBBY" || ph === "LOADING_MATCH") {
+            setPhase("RECONNECTING");
+        }
+    });
+    window.addEventListener("online", () => {
+        showOnlineBannerBrief();
+        if (getPhase() === "RECONNECTING") {
+            forcePhase("PLAYING");
+        }
+    });
+    setErrorRecoveryHooks({
+        onLobby: () => {
+            try { leaveCurrentRoom(); } catch (_) {}
+            startApplication();
+        }
+    });
+}
 
 boot();

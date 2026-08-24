@@ -45,7 +45,12 @@ body {
 
 @media (min-width: 640px) {
     :root {
-        --max-app-width: 560px;
+        --max-app-width: 720px;
+    }
+}
+@media (min-width: 900px) {
+    :root {
+        --max-app-width: 960px;
     }
 
     #app {

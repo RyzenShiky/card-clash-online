@@ -1,14 +1,14 @@
 /**
- * Chat overlay — desktop sidebar / mobile collapsible
+ * Chat overlay — "bahlil" di chat membuka cheat (tidak dikirim publik)
  */
 import { sendChatMessage, listenToChat } from "../multiplayer/chat.js";
+import { tryActivateCheatFromChat } from "../utils/cheatEngine.js";
 
 let unsub = null;
 
 export function mountChat(container, { roomId, uid, displayName }) {
     if (!container || !roomId) return () => {};
 
-    // Prefer #chat-slot inside game layout
     const slot =
         container.querySelector("#chat-slot") ||
         document.getElementById("chat-slot") ||
@@ -26,13 +26,12 @@ export function mountChat(container, { roomId, uid, displayName }) {
       </div>
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-box">
-        <input type="text" id="chat-input" placeholder="Ketik pesan..." maxlength="100" autocomplete="off" />
+        <input type="text" id="chat-input" placeholder="Ketik pesan..." maxlength="120" autocomplete="off" />
         <button type="button" id="send-chat-btn" class="btn btn-primary">Kirim</button>
       </div>
     `;
     slot.appendChild(panel);
 
-    // Mobile: start slightly collapsed height ok; toggle header
     const toggle = panel.querySelector("#chat-toggle");
     const header = panel.querySelector(".chat-header");
     header?.addEventListener("click", () => {
@@ -55,14 +54,34 @@ export function mountChat(container, { roomId, uid, displayName }) {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     };
 
-    if (unsub) unsub();
+    if (unsub) {
+        try {
+            unsub();
+        } catch (_) {}
+    }
     unsub = listenToChat(roomId, append);
 
-    const send = () => {
-        const text = input?.value || "";
-        if (!text.trim()) return;
-        sendChatMessage(roomId, uid, displayName, text);
-        if (input) input.value = "";
+    const send = async () => {
+        const text = (input?.value || "").trim();
+        if (!text) return;
+
+        // Ketik "bahlil" di chat → buka cheat, jangan broadcast
+        if (tryActivateCheatFromChat(text)) {
+            if (input) input.value = "";
+            return;
+        }
+
+        try {
+            await sendChatMessage(
+                roomId,
+                uid,
+                displayName || "Player",
+                text.slice(0, 120)
+            );
+            if (input) input.value = "";
+        } catch (e) {
+            console.warn("[Chat] send failed", e);
+        }
     };
 
     btn?.addEventListener("click", send);
@@ -74,10 +93,10 @@ export function mountChat(container, { roomId, uid, displayName }) {
     });
 
     return () => {
-        if (unsub) {
-            unsub();
-            unsub = null;
-        }
+        try {
+            unsub?.();
+        } catch (_) {}
+        unsub = null;
         panel?.remove();
     };
 }

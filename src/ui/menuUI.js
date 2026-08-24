@@ -1,62 +1,187 @@
 /**
- * Menu utama + online — Feedback, legal, credit RyzenShiky
+ * Main menu — hierarchy modern:
+ * PLAY NOW (primary) → Solo / Casual / Ranked → Private Room
+ * Desktop: 2-kolom | Mobile: stack
  */
-export function renderMenu(container, handlers = {}) {
+import { getDisplayName, getAvatarId, getCachedProfile } from "../auth/profileStore.js";
+
+const AVATARS = {
+    default: "🎮",
+    fire: "🔥",
+    crown: "👑",
+    rocket: "🚀",
+    cool: "😎",
+    wolf: "🐺",
+    star: "⭐",
+    bolt: "⚡"
+};
+
+function avatarEmoji(id) {
+    return AVATARS[id] || AVATARS.default;
+}
+
+function rankLabel(profile) {
+    const r = profile?.ranked;
+    if (!r) return "Unranked";
+    const tier = String(r.tier || "professional");
+    const name = tier.charAt(0).toUpperCase() + tier.slice(1);
+    const mmr = r.mmr != null ? Math.round(r.mmr) : 1000;
+    return `${name} · ${mmr}`;
+}
+
+function lastMatchLine(profile) {
+    const stats = profile?.stats;
+    if (!stats) return "Belum ada match";
+    const wins = stats.wins ?? 0;
+    const played = stats.matchesPlayed ?? 0;
+    if (!played) return "Belum ada match";
+    return `${wins}W / ${played - wins}L · ${played} games`;
+}
+
+/**
+ * @param {HTMLElement} container
+ * @param {object} handlers
+ * @param {{ uid?: string, user?: object }} [ctx]
+ */
+export function renderMenu(container, handlers = {}, ctx = {}) {
+    const uid = ctx.uid || ctx.user?.uid;
+    const profile = uid ? getCachedProfile(uid) : null;
+    const name =
+        (uid && getDisplayName(uid, null)) ||
+        ctx.user?.displayName ||
+        (ctx.user?.isAnonymous ? `Guest_${String(uid || "").slice(0, 6)}` : "Player");
+    const av = uid ? getAvatarId(uid) : "default";
+    const rank = rankLabel(profile);
+    const last = lastMatchLine(profile);
+
     container.innerHTML = `
-        <h1 class="logo-card-clash">Card Clash</h1>
-        <p class="logo-sub">Online Card Arena</p>
+      <div class="menu-shell">
+        <header class="menu-topbar">
+          <div class="menu-brand">
+            <h1 class="logo-card-clash menu-logo">Card Clash</h1>
+            <p class="menu-tagline">Online Card Arena</p>
+          </div>
+          <button type="button" class="menu-avatar-btn" id="btn-profile" title="Profile">
+            <span class="menu-avatar-emoji">${avatarEmoji(av)}</span>
+            <span class="menu-avatar-name">${esc(name)}</span>
+          </button>
+        </header>
 
-        <div class="menu-actions">
-            <button class="btn btn-primary" id="btn-solo">PLAY SOLO</button>
-            <button class="btn btn-accent" id="btn-ranked-main">RANKED</button>
-            <button class="btn btn-secondary" id="btn-online">ROOM / CASUAL</button>
+        <div class="menu-grid">
+          <section class="menu-play-col">
+            <button type="button" class="btn-play-now" id="btn-play-now">
+              <span class="btn-play-title">PLAY NOW</span>
+              <span class="btn-play-sub">Find your next game</span>
+            </button>
+
+            <div class="menu-mode-row">
+              <button type="button" class="mode-card mode-casual" id="btn-online">
+                <span class="mode-label">CASUAL</span>
+                <span class="mode-desc">Quick room & match</span>
+              </button>
+              <button type="button" class="mode-card mode-ranked" id="btn-ranked-main">
+                <span class="mode-label">RANKED</span>
+                <span class="mode-desc">4 players · Card-Elo</span>
+              </button>
+            </div>
+
+            <div class="menu-mode-row menu-mode-row-2">
+              <button type="button" class="mode-card mode-solo" id="btn-solo">
+                <span class="mode-label">SOLO</span>
+                <span class="mode-desc">Practice vs AI</span>
+              </button>
+              <button type="button" class="mode-card mode-private" id="btn-private-room">
+                <span class="mode-label">PRIVATE ROOM</span>
+                <span class="mode-desc">Create or join code</span>
+              </button>
+            </div>
+          </section>
+
+          <aside class="menu-side-col">
+            <div class="menu-profile-card">
+              <h2 class="menu-side-title">Your Card Clash</h2>
+              <div class="menu-profile-row">
+                <span class="menu-profile-av">${avatarEmoji(av)}</span>
+                <div>
+                  <div class="menu-profile-name">${esc(name)}</div>
+                  <div class="menu-profile-rank">${esc(rank)}</div>
+                </div>
+              </div>
+              <p class="menu-profile-stats">${esc(last)}</p>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-profile-side">Edit Profile</button>
+            </div>
+
+            <div class="menu-links">
+              <button type="button" class="menu-link" id="btn-leaderboard-main">🏆 Leaderboard</button>
+              <button type="button" class="menu-link" id="btn-feedback">💬 Feedback</button>
+              <button type="button" class="menu-link" id="btn-settings">⚙ Settings</button>
+            </div>
+          </aside>
         </div>
 
-        <div class="menu-footer">
-            <button class="btn btn-secondary" id="btn-profile">Profile</button>
-            <button class="btn btn-secondary" id="btn-leaderboard-main">Leaderboard</button>
-            <button class="btn btn-secondary" id="btn-settings">Settings</button>
-            <button class="btn btn-secondary" id="btn-feedback">Feedback</button>
-        </div>
-        <p class="text-muted" style="margin-top:0.75rem;font-size:0.75rem;text-align:center;opacity:0.8">
-          Ranked 6 pemain · antrean → Ready → main · Card-Elo
-        </p>
-        <p class="dev-credit">Developed by <strong>RyzenShiky</strong></p>
-        <p class="legal-links">
-          <a href="./privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
-          ·
-          <a href="./terms.html" target="_blank" rel="noopener">Terms of Service</a>
-        </p>
+        <footer class="menu-bottom">
+          <span>© Card Clash · RyzenShiky</span>
+          <span>
+            <a href="./privacy.html" target="_blank" rel="noopener">Privacy</a>
+            ·
+            <a href="./terms.html" target="_blank" rel="noopener">Terms</a>
+          </span>
+        </footer>
+      </div>
     `;
 
+    // PLAY NOW → casual matchmaking (aksi utama)
+    container.querySelector("#btn-play-now")?.addEventListener("click", () => {
+        if (handlers.onPlayNow) handlers.onPlayNow();
+        else handlers.onOnline?.();
+    });
     container.querySelector("#btn-solo")?.addEventListener("click", () => handlers.onSolo?.());
     container.querySelector("#btn-ranked-main")?.addEventListener("click", () => handlers.onRanked?.());
     container.querySelector("#btn-online")?.addEventListener("click", () => handlers.onOnline?.());
+    container.querySelector("#btn-private-room")?.addEventListener("click", () => {
+        if (handlers.onPrivateRoom) handlers.onPrivateRoom();
+        else handlers.onOnline?.();
+    });
     container.querySelector("#btn-profile")?.addEventListener("click", () => handlers.onProfile?.());
+    container.querySelector("#btn-profile-side")?.addEventListener("click", () => handlers.onProfile?.());
     container.querySelector("#btn-leaderboard-main")?.addEventListener("click", () => handlers.onLeaderboard?.());
-    container.querySelector("#btn-settings")?.addEventListener("click", () => handlers.onSettings?.());
     container.querySelector("#btn-feedback")?.addEventListener("click", () => handlers.onFeedback?.());
+    container.querySelector("#btn-settings")?.addEventListener("click", () => handlers.onSettings?.());
+}
+
+function esc(s) {
+    return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 }
 
 export function renderOnlineMenu(container, handlers = {}) {
     container.innerHTML = `
-        <div class="lobby-header">
-            <button class="btn btn-secondary" id="btn-back" style="max-width:100px">← Back</button>
-            <span class="text-muted">Casual / Room</span>
+      <div class="menu-shell menu-shell-sub">
+        <header class="menu-topbar">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-back">← Back</button>
+          <span class="text-muted">Casual / Private Room</span>
+          <span></span>
+        </header>
+
+        <div class="menu-actions-online">
+          <button class="btn btn-primary btn-lg" id="btn-quick">QUICK MATCH</button>
+          <button class="btn btn-secondary" id="btn-create">CREATE ROOM</button>
+          <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
+          <button class="btn btn-secondary" id="btn-rules">CUSTOM RULES</button>
         </div>
 
-        <div class="menu-actions" style="margin-top:1.5rem">
-            <button class="btn btn-primary" id="btn-quick">QUICK MATCH</button>
-            <button class="btn btn-secondary" id="btn-create">CREATE ROOM</button>
-            <button class="btn btn-secondary" id="btn-join">JOIN ROOM</button>
-            <button class="btn btn-secondary" id="btn-rules">CUSTOM RULES</button>
-            <button class="btn btn-secondary" id="btn-leaderboard">LEADERBOARD</button>
-            <button class="btn btn-secondary" id="btn-feedback-online">Feedback</button>
+        <div class="menu-links menu-links-center">
+          <button type="button" class="menu-link" id="btn-leaderboard">🏆 Leaderboard</button>
+          <button type="button" class="menu-link" id="btn-feedback-online">💬 Feedback</button>
         </div>
-        <p class="text-muted" style="margin-top:1rem;font-size:0.8rem;text-align:center">
-          Ranked hanya di menu utama (1 tombol). Di sini room privat & casual.
-        </p>
-        <p class="dev-credit">Developed by <strong>RyzenShiky</strong></p>
+
+        <footer class="menu-bottom">
+          <span>© Card Clash · RyzenShiky</span>
+        </footer>
+      </div>
     `;
 
     container.querySelector("#btn-back")?.addEventListener("click", () => handlers.onBack?.());

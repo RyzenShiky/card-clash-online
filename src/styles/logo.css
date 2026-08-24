@@ -1,12 +1,14 @@
 @import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Montserrat:wght@900&display=swap");
 
-.logo-card-clash {
+/* Logo Card Clash — style bold gradient, TANPA miring */
+.logo-card-clash,
+.menu-logo {
   font-family: "Fredoka", "Montserrat", system-ui, sans-serif;
   font-size: clamp(2.2rem, 8vw, 3.5rem);
   font-weight: 700;
   text-transform: uppercase;
-  font-style: italic;
-  letter-spacing: 0.02em;
+  font-style: normal;
+  letter-spacing: 0.04em;
   background: linear-gradient(180deg, #ffe600 0%, #ff3d00 100%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -15,16 +17,26 @@
     drop-shadow(3px 3px 0 #000)
     drop-shadow(-1px -1px 0 #fff)
     drop-shadow(6px 6px 12px rgba(0, 0, 0, 0.45));
-  transform: rotate(-6deg) skewX(-5deg);
+  transform: none;
   display: inline-block;
   line-height: 1.1;
   user-select: none;
+  margin: 0;
+  text-align: center;
 }
 
-.logo-sub {
+.menu-brand .menu-logo {
+  font-size: clamp(1.75rem, 6vw, 2.75rem);
+  transform: none;
+}
+
+.logo-sub,
+.menu-tagline {
   margin-top: 0.35rem;
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--text-muted, #94a3b8);
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  font-style: normal;
+  text-align: center;
 }

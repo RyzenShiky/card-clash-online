@@ -54,6 +54,42 @@ function hasMatchingColor(hand, color) {
     );
 }
 
+
+/**
+ * Jika draw pile habis: acak ulang discard (kecuali top card) → draw pile.
+ * Tidak terbatas — game tidak macet karena deck kosong.
+ */
+function ensureDrawPile(game, need = 1) {
+    if (!game) return game;
+    let pile = game.drawPile || [];
+    if (pile.length >= need) {
+        game.drawPileCount = pile.length;
+        return game;
+    }
+    // Kumpulkan discard history jika ada, else hanya top tetap
+    const discard = Array.isArray(game.discardPile) ? [...game.discardPile] : [];
+    const top = game.topCard;
+    // Kartu yang bisa di-reshuffle = discard tanpa top
+    let pool = discard.filter((c) => !top || c?.id !== top.id);
+    // Jika tidak ada history, tidak bisa isi — biarkan kosong
+    if (!pool.length && pile.length === 0) {
+        // fallback: tidak ada yang di-reshuffle
+        game.drawPileCount = pile.length;
+        return game;
+    }
+    // Fisher-Yates
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    pile = [...pile, ...pool];
+    game.drawPile = pile;
+    game.drawPileCount = pile.length;
+    game.discardPile = top ? [top] : [];
+    game.reshuffleCount = (game.reshuffleCount || 0) + 1;
+    return game;
+}
+
 export async function initMatchOnHost(roomId, playerIds, settings = {}) {
     const gSnap = await get(gameRef(roomId));
     if (gSnap.exists() && gSnap.val()?.status === "playing") {
@@ -76,6 +112,7 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
     const publicState = {
         status: "playing",
         topCard: discardTop,
+        discardPile: discardTop ? [discardTop] : [],
         currentColor: discardTop?.color || "red",
         currentTurn: playerIds[0],
         direction: 1,
@@ -226,10 +263,17 @@ export async function challengeWildDraw4(roomId, challengerUid) {
  * Apply cards from pile to a player (helper after transaction)
  */
 async function giveCardsFromPile(roomId, game, uid, n) {
-    const pile = [...(game.drawPile || [])];
     const drawn = [];
-    for (let i = 0; i < n && pile.length; i++) drawn.push(pile.pop());
+    for (let i = 0; i < n; i++) {
+        ensureDrawPile(game, 1);
+        const pile = game.drawPile || [];
+        if (!pile.length) break;
+        drawn.push(pile.pop());
+        game.drawPile = pile;
+        game.drawPileCount = pile.length;
+    }
     if (!drawn.length) return game;
+    const pile = game.drawPile || [];
 
     const h = (await get(handRef(roomId, uid))).val() || [];
     await set(handRef(roomId, uid), [...h, ...drawn]);
@@ -302,7 +346,13 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                 ? colorChoice
                 : playColor;
 
-        // topCard: value asli + color = warna aktif (UI kartu +4 kuning, dll)
+        // Discard history untuk reshuffle
+        if (game.topCard) {
+            const dp = Array.isArray(game.discardPile) ? game.discardPile : [];
+            dp.push(game.topCard);
+            // Batasi ukuran history (hindari payload RTDB membengkak)
+            game.discardPile = dp.slice(-80);
+        }
         game.topCard = {
             id: playId,
             value: playValue,
@@ -678,8 +728,9 @@ export async function drawCardOnline(roomId, uid, opts = {}) {
             return; // stale
         }
 
+        ensureDrawPile(game, 1);
         const pile = game.drawPile || [];
-        if (!pile.length) return;
+        if (!pile.length) return; // benar-benar kosong (semua kartu di tangan)
 
         const drawn = pile.pop();
         reservedCard = drawn;
