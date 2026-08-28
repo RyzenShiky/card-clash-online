@@ -91,13 +91,21 @@ function ensureDrawPile(game, need = 1) {
 }
 
 export async function initMatchOnHost(roomId, playerIds, settings = {}) {
+    const ids = (playerIds || []).filter(Boolean);
+    if (ids.length < 2) {
+        throw new Error("Minimal 2 pemain untuk memulai (isi bot jika sepi).");
+    }
+
     const gSnap = await get(gameRef(roomId));
     if (gSnap.exists() && gSnap.val()?.status === "playing") {
         return gSnap.val();
     }
 
     const full = shuffle(createDeck());
-    const { hands, remaining } = deal(full, playerIds.length, 7);
+    const { hands, remaining } = deal(full, ids.length, 7);
+    if (!hands?.length || hands.some((h) => !h || !h.length)) {
+        throw new Error("Gagal deal kartu — deck kosong?");
+    }
 
     let discardTop = remaining.pop();
     while (
@@ -108,26 +116,25 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         discardTop = remaining.pop();
     }
 
-    const scores = Object.fromEntries(playerIds.map((id) => [id, 0]));
+    const scores = Object.fromEntries(ids.map((id) => [id, 0]));
     const publicState = {
         status: "playing",
         topCard: discardTop,
         discardPile: discardTop ? [discardTop] : [],
         currentColor: discardTop?.color || "red",
-        currentTurn: playerIds[0],
+        currentTurn: ids[0],
         direction: 1,
         drawPile: remaining,
         drawPileCount: remaining.length,
-        playerIds,
+        playerIds: ids,
         handCounts: Object.fromEntries(
-            playerIds.map((id, i) => [id, hands[i].length])
+            ids.map((id, i) => [id, hands[i].length])
         ),
         winner: null,
         roundWinner: null,
         scores,
         targetScore: settings.targetScore ?? 500,
-        // Default OFF: +2/+4 langsung kena penalti + skip
-        stacking: false, // +2/+4 langsung penalti, tidak chain
+        stacking: false,
         stackAmount: 0,
         stackType: null,
         pendingUno: null,
@@ -138,18 +145,36 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         lastActionId: null,
         pendingHands: {},
         turnEndsAt: Date.now() + (settings.turnTimer || 30) * 1000,
-        /** uid → { place, finishedAt, name } — pemain yang sudah keluar */
         finishedPlayers: {},
         placements: [],
         spectators: {},
         updatedAt: Date.now()
     };
 
-    await set(gameRef(roomId), publicState);
-    for (let i = 0; i < playerIds.length; i++) {
-        await set(handRef(roomId, playerIds[i]), hands[i]);
+    try {
+        await set(gameRef(roomId), publicState);
+    } catch (e) {
+        logger.error("[Match] write game failed:", e.code, e.message);
+        throw new Error(
+            "Gagal menulis game state (PERMISSION?). Publish rules terbaru. " +
+                (e.message || "")
+        );
     }
-    logger.info("[Match] Dealt", playerIds.length, "players");
+
+    for (let i = 0; i < ids.length; i++) {
+        try {
+            await set(handRef(roomId, ids[i]), hands[i]);
+        } catch (e) {
+            logger.error("[Match] write hand failed:", ids[i], e.code, e.message);
+            throw new Error(
+                "Gagal bagi kartu ke " +
+                    String(ids[i]).slice(0, 8) +
+                    " (PERMISSION hands?). " +
+                    (e.message || "")
+            );
+        }
+    }
+    logger.info("[Match] Dealt", ids.length, "players, hand sizes", hands.map((h) => h.length));
     return publicState;
 }
 

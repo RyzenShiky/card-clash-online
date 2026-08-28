@@ -697,8 +697,8 @@ function enterMultiplayerMatch(roomId, room) {
                 });
                 await logMatchStart(roomId, playerIds, room.settings);
             } catch (e) {
-                logger.error(e);
-                showNotification(e.message || "Gagal init match");
+                logger.error("[Match] initMatchOnHost:", e);
+                showNotification(e.message || "Gagal bagi kartu — cek Rules / Console");
             }
         }
 
