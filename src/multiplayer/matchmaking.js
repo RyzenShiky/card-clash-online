@@ -252,7 +252,11 @@ export async function fillBots(roomId, hostUid, targetCount = RANKED_MAX_PLAYERS
 export async function clearFromQueue(roomId, mode = "casual") {
     try {
         await remove(ref(database, `${queuePath(mode)}/${roomId}`));
-    } catch (_) {}
+        logger.info("[Matchmaking] cleared queue", mode, roomId);
+    } catch (e) {
+        // Non-fatal untuk private room; log supaya tidak silent
+        logger.warn("[Matchmaking] clearFromQueue failed:", e.code || "", e.message);
+    }
 }
 
 

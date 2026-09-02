@@ -539,7 +539,10 @@ function enterLobby(roomId, roomCode) {
         }
 
         if (room.meta?.status === "playing") {
-            enterMultiplayerMatch(roomId, room);
+            // Jangan panggil berulang — setiap update room (presence/mic) memicu ini
+            if (!matchEntryLock) {
+                enterMultiplayerMatch(roomId, room);
+            }
             return;
         }
 
@@ -642,18 +645,31 @@ function cleanupMatchSubs() {
 }
 
 function enterMultiplayerMatch(roomId, room) {
-    setPhase("LOADING_MATCH");
     if (matchEntryLock) {
         logger.info("[Match] already entering, skip duplicate");
         return;
     }
     matchEntryLock = true;
+    forcePhase("LOADING_MATCH");
 
     const playerIds = Object.keys(room.players || {});
     const isHost = room.meta?.hostId === currentUser.uid;
 
     showScreen("game");
-    setPhase("PLAYING");
+    // Placeholder biar tidak layar hitam sambil boot
+    try {
+        const gs = screens.game();
+        if (gs && !gs.querySelector(".game-loading-hint")) {
+            const hint = document.createElement("div");
+            hint.className = "game-loading-hint";
+            hint.style.cssText =
+                "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;z-index:1";
+            hint.textContent = "Memuat pertandingan…";
+            gs.style.position = "relative";
+            gs.appendChild(hint);
+        }
+    } catch (_) {}
+    forcePhase("PLAYING");
     try {
         if (bgmCleanup) bgmCleanup();
         bgmCleanup = mountBgmControls(document.body, {
@@ -1064,8 +1080,16 @@ function enterMultiplayerMatch(roomId, room) {
         matchUnsubs.push(unsubPublic, unsubHand);
         listenerManager.add(matchKey, unsubPublic);
         listenerManager.add(matchKey, unsubHand);
+        ensureChat();
+        logger.info("[Match] boot complete — listeners active", roomId);
     };
 
+    // WAJIB: tanpa ini layar game kosong (hanya Mic)
+    boot().catch((e) => {
+        logger.error("[Match] boot failed:", e);
+        showNotification(e.message || "Gagal memuat match");
+        matchEntryLock = false;
+    });
 }
 
 /**
