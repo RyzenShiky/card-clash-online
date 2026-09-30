@@ -64,18 +64,24 @@ class VoiceManager {
                 cb(snap);
             } catch (_) {}
         }
-        // Hanya tombol mute, bukan unlock-audio
+        // Mute is a local track operation — never disable the button based on network state
         document.querySelectorAll("#btn-mic, .voice-mute-button").forEach((btn) => {
             const muted = this.muted;
-            const can =
-                this.state === "CONNECTED" ||
-                this.state === "MUTED" ||
-                this.state === "READY" ||
-                this.state === "CONNECTING";
+            const tracksLive = this._tracksLive();
             btn.textContent = muted ? "🔇 Unmute" : "🎙️ Mic";
             btn.classList.toggle("muted", muted);
-            btn.disabled = !can;
+            btn.disabled = false; // always clickable
+            if (!tracksLive && !muted) {
+                btn.title = "Mic track tidak aktif — klik untuk retry";
+            } else {
+                btn.title = muted ? "Unmute microphone" : "Mute microphone";
+            }
         });
+    }
+
+    _tracksLive() {
+        if (!this.localStream) return false;
+        return this.localStream.getAudioTracks().some((t) => t.readyState === "live");
     }
 
     _setState(s) {
@@ -85,7 +91,8 @@ class VoiceManager {
     }
 
     _refreshConnectionState() {
-        if (this.state === "LEAVING" || this.state === "IDLE" || this.state === "FAILED") {
+        // Do NOT treat FAILED as terminal — temporary disconnects must be recoverable
+        if (this.state === "LEAVING" || this.state === "IDLE") {
             return;
         }
         if (!this.peers.size) {
@@ -100,10 +107,11 @@ class VoiceManager {
             if (st === "connected") {
                 anyConnected = true;
                 allFailed = false;
-            } else if (st === "connecting" || st === "new") {
+            } else if (st === "connecting" || st === "new" || st === "disconnected") {
+                // "disconnected" is often transient (WiFi blip) — treat as connecting
                 anyConnecting = true;
                 allFailed = false;
-            } else if (st !== "failed" && st !== "closed" && st !== "disconnected") {
+            } else if (st !== "failed" && st !== "closed") {
                 allFailed = false;
             }
         }

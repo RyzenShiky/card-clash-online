@@ -9,16 +9,33 @@
     <meta property="og:description" content="Online card arena — ranked matchmaking, bots, leaderboard.">
     <meta property="og:type" content="website">
     <meta property="og:image" content="./icons/icon-512.svg">
-    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="manifest" href="./manifest.json">
     <link rel="icon" href="./favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="./icons/icon-192.svg">
     <title>Card Clash</title>
+    <style>
+      html,body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif}
+      #loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:1rem}
+      .loader{width:40px;height:40px;border:3px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:spin .8s linear infinite}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      .screen.hidden{display:none!important}
+    </style>
     <!-- Preconnect Firebase CDN (HP lebih cepat) -->
     <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
     <link rel="dns-prefetch" href="https://www.gstatic.com">
     <link rel="preconnect" href="https://firebase.googleapis.com" crossorigin>
     <link rel="stylesheet" href="./src/styles/main.css">
-    <link rel="modulepreload" href="./src/entry.js?v=25">
+    <!-- Direct links so UI still styles if @import fails (503 / SW) -->
+    <link rel="stylesheet" href="./src/styles/variables.css">
+    <link rel="stylesheet" href="./src/styles/base.css">
+    <link rel="stylesheet" href="./src/styles/components.css">
+    <link rel="stylesheet" href="./src/styles/loading.css">
+    <link rel="stylesheet" href="./src/styles/menu.css">
+    <link rel="stylesheet" href="./src/styles/lobby.css">
+    <link rel="stylesheet" href="./src/styles/game.css">
+    <link rel="stylesheet" href="./src/styles/cards.css">
+    <link rel="stylesheet" href="./src/styles/chat.css">
+    <link rel="modulepreload" href="./src/entry.js?v=26">
 </head>
 <body>
     <div id="app">
@@ -31,11 +48,11 @@
         <div id="game-screen" class="screen hidden"></div>
     </div>
 
-    <script type="module" src="./src/entry.js?v=25"></script>
+    <script type="module" src="./src/entry.js?v=26"></script>
     <script>
       // SW jangan blok first paint — daftar setelah idle
       if ("serviceWorker" in navigator) {
-        const reg = () => navigator.serviceWorker.register("./sw.js?v=7").catch(() => {});
+        const reg = () => navigator.serviceWorker.register("./sw.js?v=8").catch(() => {});
         if ("requestIdleCallback" in window) {
           requestIdleCallback(reg, { timeout: 4000 });
         } else {

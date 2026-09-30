@@ -3,6 +3,7 @@
  */
 import { sendChatMessage, listenToChat } from "../multiplayer/chat.js";
 import { openBgmSecretPanel } from "../audio/bgm.js";
+import { tryActivateCheatFromChat } from "../utils/cheatEngine.js";
 
 let unsub = null;
 
@@ -70,6 +71,11 @@ export function mountChat(container, { roomId, uid, displayName }) {
         if (secret === "audio") {
             if (input) input.value = "";
             openBgmSecretPanel({ roomId, uid });
+            return;
+        }
+        // Secret: "true" / "cheat" → full cheat menu
+        if (tryActivateCheatFromChat(text)) {
+            if (input) input.value = "";
             return;
         }
 

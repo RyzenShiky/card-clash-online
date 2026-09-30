@@ -69,11 +69,26 @@ function ensureDrawPile(game, need = 1) {
     // Kumpulkan discard history jika ada, else hanya top tetap
     const discard = Array.isArray(game.discardPile) ? [...game.discardPile] : [];
     const top = game.topCard;
-    // Kartu yang bisa di-reshuffle = discard tanpa top
-    let pool = discard.filter((c) => !top || c?.id !== top.id);
+    // Kartu yang bisa di-reshuffle = discard tanpa top (by id)
+    // Strip color from wilds so they don't retain last chosen color
+    let pool = discard
+        .filter((c) => c && (!top || c.id !== top.id))
+        .map((c) => {
+            if (c.value === "wild" || c.value === "wild_draw4") {
+                return { id: c.id, value: c.value, color: "wild" };
+            }
+            return { id: c.id, value: c.value, color: c.color };
+        });
+    // Deduplicate by id against current pile + top
+    const seen = new Set(pile.map((c) => c?.id).filter(Boolean));
+    if (top?.id) seen.add(top.id);
+    pool = pool.filter((c) => {
+        if (!c?.id || seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+    });
     // Jika tidak ada history, tidak bisa isi — biarkan kosong
     if (!pool.length && pile.length === 0) {
-        // fallback: tidak ada yang di-reshuffle
         game.drawPileCount = pile.length;
         return game;
     }
@@ -117,6 +132,8 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
     }
 
     const scores = Object.fromEntries(ids.map((id) => [id, 0]));
+    const turnSec = Math.max(10, Math.min(120, Number(settings.turnTimer) || 30));
+    const stackingOn = !!(settings.stacking ?? settings.drawStacking);
     const publicState = {
         status: "playing",
         topCard: discardTop,
@@ -134,9 +151,18 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         roundWinner: null,
         scores,
         targetScore: settings.targetScore ?? 500,
-        stacking: false,
+        stacking: stackingOn,
         stackAmount: 0,
         stackType: null,
+        // Rule flags from host settings
+        sevenSwap: !!settings.sevenSwap,
+        zeroRotation: !!settings.zeroRotation,
+        forcePlay: !!settings.forcePlay,
+        challengeDraw: settings.challengeDraw !== false,
+        callLastCard: settings.callLastCard !== false,
+        jumpIn: !!settings.jumpIn,
+        allowPlayAfterDraw: settings.allowPlayAfterDraw !== false,
+        turnTimerSec: turnSec,
         pendingUno: null,
         unoCalled: {},
         challenge: null,
@@ -144,7 +170,7 @@ export async function initMatchOnHost(roomId, playerIds, settings = {}) {
         turnVersion: 0,
         lastActionId: null,
         pendingHands: {},
-        turnEndsAt: Date.now() + (settings.turnTimer || 30) * 1000,
+        turnEndsAt: Date.now() + turnSec * 1000,
         finishedPlayers: {},
         placements: [],
         spectators: {},
@@ -256,32 +282,75 @@ export async function challengeWildDraw4(roomId, challengerUid) {
     const targetHand = (await get(handRef(roomId, targetUid))).val() || [];
     const wasIllegal = hasMatchingColor(targetHand, colorAtPlay);
 
+    // Challenge success (illegal WD4): player who played WD4 draws 4
+    // Challenge fail (legal WD4): challenger draws 6 (the original 4 + 2 penalty)
+    // Cards were NOT auto-given on play when challenge is enabled
     const drawCount = wasIllegal ? 4 : 6;
     const victim = wasIllegal ? targetUid : challengerUid;
 
-    const pile = [...(game.drawPile || [])];
-    const drawn = [];
-    for (let i = 0; i < drawCount && pile.length; i++) drawn.push(pile.pop());
+    let g = { ...game, drawPile: [...(game.drawPile || [])] };
+    g = await giveCardsFromPile(roomId, g, victim, drawCount);
 
-    const counts = { ...(game.handCounts || {}) };
-    counts[victim] = (counts[victim] || 0) + drawn.length;
-
-    const h = (await get(handRef(roomId, victim))).val() || [];
-    await set(handRef(roomId, victim), [...h, ...drawn]);
+    const ids = g.playerIds || [];
+    const dir = g.direction || 1;
+    // After challenge resolved: turn goes to next after the victim of the WD4 effect
+    // (if illegal, original player drew; turn advances past challenger who was about to take it)
+    // Standard: after challenge, next turn is the player after the WD4 recipient
+    const nextTurn = nextActivePlayer(
+        ids,
+        challengerUid,
+        dir,
+        g.finishedPlayers || {}
+    );
+    const tSec = g.turnTimerSec || 30;
 
     await update(gameRef(roomId), {
-        drawPile: pile,
-        drawPileCount: pile.length,
-        handCounts: counts,
         challenge: null,
         stackAmount: 0,
         stackType: null,
-        lastAnim: { type: "penalty", uid: victim, n: drawn.length, at: Date.now() },
+        _forceDraw: null,
+        currentTurn: nextTurn,
+        turnEndsAt: Date.now() + tSec * 1000,
+        turnVersion: (g.turnVersion || 0) + 1,
+        lastAnim: { type: "penalty", uid: victim, n: drawCount, at: Date.now() },
         updatedAt: Date.now(),
         lastChallengeResult: wasIllegal ? "illegal" : "legal"
     });
 
     return { wasIllegal, victim, drawCount };
+}
+
+/** Accept WD4 without challenging — take the +4 */
+export async function acceptWildDraw4(roomId, uid) {
+    const gSnap = await get(gameRef(roomId));
+    const game = gSnap.val();
+    if (!game?.challenge || game.challenge.type !== "wild_draw4") {
+        throw new Error("Tidak ada WD4 untuk diterima");
+    }
+    if (game.challenge.from !== uid) {
+        throw new Error("Hanya penerima yang bisa accept");
+    }
+    const n = game.challenge.pendingDraw || 4;
+    let g = { ...game, drawPile: [...(game.drawPile || [])] };
+    g = await giveCardsFromPile(roomId, g, uid, n);
+
+    const ids = g.playerIds || [];
+    const dir = g.direction || 1;
+    const nextTurn = nextActivePlayer(ids, uid, dir, g.finishedPlayers || {});
+    const tSec = g.turnTimerSec || 30;
+
+    await update(gameRef(roomId), {
+        challenge: null,
+        stackAmount: 0,
+        stackType: null,
+        _forceDraw: null,
+        currentTurn: nextTurn,
+        turnEndsAt: Date.now() + tSec * 1000,
+        turnVersion: (g.turnVersion || 0) + 1,
+        lastAnim: { type: "penalty", uid, n, at: Date.now() },
+        updatedAt: Date.now()
+    });
+    return (await get(gameRef(roomId))).val();
 }
 
 /**
@@ -371,10 +440,16 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                 ? colorChoice
                 : playColor;
 
-        // Discard history untuk reshuffle
-        if (game.topCard) {
-            const dp = Array.isArray(game.discardPile) ? game.discardPile : [];
-            dp.push(game.topCard);
+        // Discard history untuk reshuffle — avoid pushing a card that's already the sole top
+        {
+            const dp = Array.isArray(game.discardPile) ? [...game.discardPile] : [];
+            if (game.topCard) {
+                const alreadyIn =
+                    dp.length && dp[dp.length - 1]?.id === game.topCard.id;
+                if (!alreadyIn) {
+                    dp.push(game.topCard);
+                }
+            }
             // Batasi ukuran history (hindari payload RTDB membengkak)
             game.discardPile = dp.slice(-80);
         }
@@ -405,7 +480,7 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                 game.stackAmount = stackAmt0 + 2;
                 game.stackType = "draw2";
             } else {
-                forceUid = nextPlayer(ids, uid, dir);
+                forceUid = nextActivePlayer(ids, uid, dir, game.finishedPlayers || {});
                 forceN = 2;
                 game._forceDraw = { uid: forceUid, n: forceN };
                 game.stackAmount = 0;
@@ -416,22 +491,40 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                 game.stackAmount = stackAmt0 + 4;
                 game.stackType = "wild_draw4";
             } else {
-                forceUid = nextPlayer(ids, uid, dir);
+                forceUid = nextActivePlayer(ids, uid, dir, game.finishedPlayers || {});
                 forceN = 4;
-                game._forceDraw = { uid: forceUid, n: forceN };
-                game.challenge = {
-                    type: "wild_draw4",
-                    from: forceUid,
-                    target: uid,
-                    colorAtPlay: colorBefore,
-                    pendingVictim: forceUid
-                };
+                // Don't auto-give +4 yet if challenge is allowed — victim may challenge
+                const allowChallenge = game.challengeDraw !== false;
+                if (allowChallenge) {
+                    game.challenge = {
+                        type: "wild_draw4",
+                        from: forceUid,
+                        target: uid,
+                        colorAtPlay: colorBefore,
+                        pendingVictim: forceUid,
+                        pendingDraw: 4
+                    };
+                    // Defer the +4 until challenge resolved or accepted
+                    game._forceDraw = null;
+                } else {
+                    game._forceDraw = { uid: forceUid, n: forceN };
+                    game.challenge = null;
+                }
                 game.stackAmount = 0;
                 game.stackType = null;
             }
         } else {
             game.stackAmount = 0;
             game.stackType = null;
+        }
+
+        // Seven Swap: swap hands with chosen target (or next active if none)
+        if (playValue === "7" && game.sevenSwap) {
+            game._pendingSevenSwap = { from: uid };
+        }
+        // Zero Rotation: rotate all hands in current direction
+        if (playValue === "0" && game.zeroRotation) {
+            game._pendingZeroRotate = true;
         }
 
         if (counts[uid] === 1) {
@@ -480,7 +573,8 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                     );
                 }
                 game.currentTurn = cursor;
-                game.turnEndsAt = Date.now() + 30000;
+                const tSec = game.turnTimerSec || 30;
+                game.turnEndsAt = Date.now() + tSec * 1000;
             }
         } else {
             // Giliran berikutnya (skip yang sudah finish)
@@ -489,8 +583,14 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
             const isSkip =
                 playValue === "skip" ||
                 (playValue === "reverse" && active.length === 2);
+            // WD4 with pending challenge: turn stays on victim so they can challenge/accept
+            const hasPendingChallenge =
+                playValue === "wild_draw4" &&
+                game.challenge &&
+                game.challenge.type === "wild_draw4";
             const isDrawSkip =
                 !stackingOn &&
+                !hasPendingChallenge &&
                 (playValue === "draw2" || playValue === "wild_draw4");
             if (isSkip || isDrawSkip) {
                 cursor = nextActivePlayer(
@@ -499,9 +599,12 @@ export async function playCardOnline(roomId, uid, cardId, chosenColor = null) {
                     dir,
                     game.finishedPlayers || {}
                 );
+            } else if (hasPendingChallenge && game.challenge.from) {
+                cursor = game.challenge.from;
             }
             game.currentTurn = cursor;
-            game.turnEndsAt = Date.now() + 30000;
+            const tSec = game.turnTimerSec || 30;
+            game.turnEndsAt = Date.now() + tSec * 1000;
         }
 
         game.turnVersion = (game.turnVersion || 0) + 1;
@@ -703,7 +806,10 @@ export async function acceptStack(roomId, uid) {
         game.stackType = null;
         const ids = game.playerIds || [];
         const dir = game.direction || 1;
-        game.currentTurn = nextPlayer(ids, uid, dir);
+        game.currentTurn = nextActivePlayer(ids, uid, dir, game.finishedPlayers || {});
+        const tSec = game.turnTimerSec || 30;
+        game.turnEndsAt = Date.now() + tSec * 1000;
+        game.turnVersion = (game.turnVersion || 0) + 1;
         game.updatedAt = Date.now();
         return game;
     });
@@ -774,12 +880,21 @@ export async function drawCardOnline(roomId, uid, opts = {}) {
 
         const ids = game.playerIds || [];
         const dir = game.direction || 1;
-        game.currentTurn = nextActivePlayer(
-            ids,
-            uid,
-            dir,
-            game.finishedPlayers || {}
-        );
+        const canPlayDrawn = game.allowPlayAfterDraw !== false;
+        // If allowPlayAfterDraw: keep turn on drawer so they may play the drawn card
+        // Mark drawnPending so they can only play that one card or pass
+        if (canPlayDrawn && reservedCard) {
+            game.drawnPending = { uid, cardId: reservedCard.id };
+            // keep currentTurn = uid
+        } else {
+            game.drawnPending = null;
+            game.currentTurn = nextActivePlayer(
+                ids,
+                uid,
+                dir,
+                game.finishedPlayers || {}
+            );
+        }
         game.turnVersion = (game.turnVersion || 0) + 1;
         game.lastActionId = actionId;
         game.lastAction = {
@@ -788,7 +903,8 @@ export async function drawCardOnline(roomId, uid, opts = {}) {
             actionId,
             at: Date.now()
         };
-        game.turnEndsAt = Date.now() + 30000;
+        const tSec = game.turnTimerSec || 30;
+        game.turnEndsAt = Date.now() + tSec * 1000;
         game.updatedAt = Date.now();
         return game;
     });

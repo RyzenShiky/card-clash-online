@@ -75,7 +75,7 @@ import { sfx } from "./audio/sfx.js";
 import { pickColor, showDrawPenaltyAnim } from "./ui/colorPicker.js";
 import { mountChat } from "./ui/chatUI.js";
 import { mountBgmControls, stopBgmSync } from "./audio/bgm.js";
-import { initCheatEngine } from "./utils/cheatEngine.js";
+import { initCheatEngine, setCheatContext, tryActivateCheatFromChat } from "./utils/cheatEngine.js";
 import {
     joinVoiceChannel,
     leaveVoiceChannel,
@@ -706,10 +706,19 @@ function enterMultiplayerMatch(roomId, room) {
     const boot = async () => {
         if (isHost) {
             try {
+                const cr = room.settings?.customRules || {};
                 await initMatchOnHost(roomId, playerIds, {
-                    targetScore: room.settings?.targetScore ?? 500,
-                    stacking: room.settings?.customRules?.drawStacking ?? false,
-                    turnTimer: room.settings?.turnTimer ?? 30
+                    targetScore: room.settings?.targetScore ?? cr.targetScore ?? 500,
+                    stacking: !!(cr.drawStacking ?? room.settings?.stacking),
+                    drawStacking: !!(cr.drawStacking ?? room.settings?.stacking),
+                    turnTimer: room.settings?.turnTimer ?? cr.turnTimer ?? 30,
+                    sevenSwap: !!cr.sevenSwap,
+                    zeroRotation: !!cr.zeroRotation,
+                    forcePlay: !!cr.forcePlay,
+                    challengeDraw: cr.challengeDraw !== false,
+                    callLastCard: cr.callLastCard !== false,
+                    jumpIn: !!cr.jumpIn,
+                    allowPlayAfterDraw: cr.allowPlayAfterDraw !== false
                 });
                 await logMatchStart(roomId, playerIds, room.settings);
             } catch (e) {
@@ -760,12 +769,25 @@ function enterMultiplayerMatch(roomId, room) {
                             uid: turn,
                             card: { id: action.cardId, value: "?", color: action.color }
                         });
+                        // Bot calls UNO when left with 1 card
+                        const afterCount = (botHand?.length || 1) - 1;
+                        if (afterCount === 1) {
+                            try {
+                                await callUno(roomId, turn);
+                            } catch (_) {}
+                        }
                     } else {
                         await drawCardOnline(roomId, turn);
                         logEvent(roomId, { type: "draw", uid: turn });
                     }
                 } catch (e) {
                     logger.warn("[Bot] turn failed:", e.message);
+                    // Retry once after short delay so turn doesn't freeze forever
+                    setTimeout(() => {
+                        try {
+                            runOnlineBotIfNeeded(publicState);
+                        } catch (_) {}
+                    }, 2500);
                 }
             }, botThinkMs(diff));
         };
@@ -1213,9 +1235,10 @@ function ensureMicButton() {
     btn.id = "btn-mic";
     btn.className = "btn btn-secondary btn-mic";
     btn.textContent = "🎙️ Mic";
+    // Single source of truth: voiceManager.muted via toggleMuteMic()
     btn.addEventListener("click", () => {
-        voiceMuted = !voiceMuted;
-        toggleMuteMic(voiceMuted);
+        const nowMuted = toggleMuteMic();
+        voiceMuted = !!nowMuted;
         btn.textContent = voiceMuted ? "🔇 Unmute" : "🎙️ Mic";
         btn.classList.toggle("muted", voiceMuted);
     });
@@ -1252,10 +1275,16 @@ window.__cardClashLogout = async () => {
     await logout();
 };
 
-initCheatEngine({
-    getRoomId: () => currentRoomId,
-    getUid: () => currentUser?.uid
-});
+initCheatEngine();
+// Keep cheat context in sync
+setInterval(() => {
+    try {
+        setCheatContext({
+            roomId: currentRoomId || null,
+            uid: currentUser?.uid || null
+        });
+    } catch (_) {}
+}, 2000);
 
 
 function installConnectionGuards() {
